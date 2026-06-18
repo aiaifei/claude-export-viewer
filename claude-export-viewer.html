@@ -1,0 +1,2532 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Claude 数据导出查看器</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<style>
+  :root{
+    --bg:#f5f4ef; --panel:#fff; --ink:#1f1e1c; --muted:#6b6862; --line:#e6e3dc;
+    --accent:#cc6b3f; --accent-weak:#f3e6dd; --human:#2563eb; --human-bg:#eef3fd;
+    --asst-bg:#faf9f5; --code-bg:#1f1e1c; --code-ink:#e8e6e0;
+    /* Claude widget design tokens — let inline SVGs that reference them render in color */
+    --color-background-primary:#fff;--color-background-secondary:#f5f4ef;--color-background-tertiary:#ece9e2;
+    --color-text-primary:#1f1e1c;--color-text-secondary:#6b6862;--color-text-tertiary:#908d86;
+    --color-text-success:#3c8a4e;--color-text-danger:#c0392b;--color-text-warning:#b8860b;--color-text-accent:#cc6b3f;
+    --color-border-primary:#d9d5cc;--color-border-secondary:#e6e3dc;--color-border-tertiary:#ece9e2;
+    --color-success:#3c8a4e;--color-danger:#c0392b;--color-warning:#b8860b;--color-accent:#cc6b3f;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;overflow:hidden}
+  body{font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"PingFang SC","Microsoft YaHei",sans-serif;
+    color:var(--ink);background:var(--bg)}
+  /* layout */
+  .app{display:grid;grid-template-columns:340px 1fr;height:100vh;overflow:hidden}
+  .sidebar{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+  .main{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden}
+  /* header / loader */
+  .brand{display:flex;align-items:center;gap:9px;padding:16px 16px 12px;border-bottom:1px solid var(--line)}
+  .star{width:22px;height:22px;flex:0 0 auto}
+  .brand b{font-size:16px}
+  .brand span{color:var(--muted);font-size:12px;margin-left:auto}
+  .loadbar{padding:8px 12px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+  .drop{display:flex;align-items:center;justify-content:center;gap:7px;border:1.5px dashed var(--line);
+    border-radius:8px;padding:8px 10px;text-align:center;color:var(--muted);cursor:pointer;transition:.15s;
+    font-size:12.5px;background:var(--bg);line-height:1.2}
+  .drop:hover,.drop.hot{border-color:var(--accent);color:var(--accent);background:var(--accent-weak)}
+  .drop b{color:var(--ink);font-size:13px;font-weight:600}
+  .drop.hot b{color:var(--accent)}
+  .drop .dropico{flex:0 0 auto;width:15px;height:15px}
+  .drop .dropsub{font-size:11px;opacity:.7}
+  .loadrow{display:flex;gap:6px;align-items:stretch}
+  .search{flex:1;min-width:0;padding:7px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;font-size:13px;background:var(--bg)}
+  .search:focus{outline:none;border-color:var(--accent)}
+  .stats{display:flex;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+  .pill{background:var(--bg);border:1px solid var(--line);border-radius:999px;padding:2px 9px;white-space:nowrap}
+  .pill b{color:var(--ink)}
+  /* list */
+  .list{overflow:auto;flex:1}
+  .item{padding:9px 11px;border:1px solid var(--line);border-radius:9px;margin-bottom:7px;cursor:pointer;background:var(--bg);transition:.1s}
+  .item:hover{border-color:var(--accent);background:var(--accent-weak)}
+  .item.sel{border-color:var(--accent);background:var(--accent-weak);box-shadow:inset 3px 0 0 var(--accent)}
+  .item .t{font-weight:600;font-size:14px;margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .item .m{color:var(--muted);font-size:12px;display:flex;gap:8px;flex-wrap:wrap}
+  .item .snip{color:var(--muted);font-size:12px;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical;overflow:hidden}
+  /* sort row */
+  .sortrow{display:flex;gap:6px;padding:8px 16px;border-bottom:1px solid var(--line);font-size:12px;align-items:center}
+  .sortrow span{color:var(--muted)}
+  .sortrow button{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--bg);border-radius:6px;
+    padding:3px 9px;cursor:pointer;color:var(--muted)}
+  .sortrow button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  /* conversation view */
+  .convhead{padding:16px 22px;border-bottom:1px solid var(--line);background:var(--panel);flex:0 0 auto}
+  .convtop{display:flex;align-items:center;gap:12px}
+  .convtop h2{margin:0;font-size:18px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .convexport{display:flex;gap:8px;flex:0 0 auto}
+  .expbtn{font:inherit;font-size:13px;font-weight:500;border:1px solid var(--line);background:var(--bg);
+    border-radius:7px;padding:6px 12px;cursor:pointer;color:var(--ink);white-space:nowrap}
+  .expbtn:hover{background:#efece4;border-color:var(--accent)}
+  .expbtn.pdf{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .expbtn.pdf:hover{background:#b85a30}
+  .convsearch{display:flex;align-items:center;gap:8px;margin-top:12px}
+  /* when the main panel is showing a project (not a chat), hide chat-only controls */
+  #convwrap.projmode .convexport,#convwrap.projmode .convsearch,#convwrap.projmode #scrollnav{display:none}
+  #convwrap.projmode .convmeta-proj{color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  .csearchin{flex:1;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:8px;font:inherit;background:var(--bg)}
+  .csearchin:focus{outline:none;border-color:var(--accent)}
+  .csearchbtn{font:inherit;font-size:14px;font-weight:500;border:1px solid var(--accent);background:var(--accent);
+    color:#fff;border-radius:8px;padding:9px 18px;cursor:pointer;flex:0 0 auto}
+  .csearchbtn:hover{background:#b85a30}
+  .csearchcount{font-size:12px;color:var(--muted);min-width:44px;text-align:center;flex:0 0 auto}
+  .snbtn.sm{width:34px;height:34px}
+  mark.cur{background:#ff9a3d;color:#fff}
+  mark.csearch{background:#ffe08a;color:inherit;border-radius:2px;padding:0 1px}
+  mark.csearch.cur{background:#ff9a3d;color:#fff}
+  .statsbtn{font:inherit;font-size:12.5px;font-weight:500;border:1px solid var(--line);background:var(--bg);
+    border-radius:8px;padding:7px 10px;cursor:pointer;color:var(--ink);white-space:nowrap;flex:0 0 auto}
+  .statsbtn:hover:not(:disabled){background:var(--accent);color:#fff;border-color:var(--accent)}
+  .statsbtn:disabled{opacity:.5;cursor:default}
+  .statspage{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}
+  .statshead{display:flex;align-items:center;gap:14px;padding:16px 28px;border-bottom:1px solid var(--line);
+    background:var(--panel);flex:0 0 auto}
+  .statshead h2{margin:0;font-size:19px}
+  .statsbackbtn{font:inherit;font-size:14px;font-weight:500;border:1px solid var(--accent);background:var(--accent);
+    color:#fff;border-radius:8px;padding:8px 16px;cursor:pointer;flex:0 0 auto}
+  .statsbackbtn:hover{background:#b85a30}
+  .statssub{color:var(--muted);font-size:13px;margin-left:auto}
+  .statsbody{flex:1;overflow:auto;padding:28px;max-width:1100px;margin:0 auto;width:100%}
+  .statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:28px}
+  .statcard{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .statcard .num{font-size:28px;font-weight:700;color:var(--accent);line-height:1.1}
+  .statcard .lbl{font-size:13px;color:var(--muted);margin-top:4px}
+  .statsec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;margin-bottom:22px}
+  .statsec h3{margin:0 0 16px;font-size:15px}
+  .barrow{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:13px}
+  .barrow .bl{flex:0 0 130px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .barrow .bt{flex:1;background:var(--bg);border-radius:5px;height:20px;position:relative;overflow:hidden}
+  .barrow .bf{position:absolute;left:0;top:0;bottom:0;background:linear-gradient(90deg,#cc6b3f,#e08a5f);border-radius:5px}
+  .barrow .bv{flex:0 0 auto;color:var(--muted);font-size:12px;min-width:36px;text-align:right}
+  .wordcloud{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline;line-height:1.8}
+  .wordcloud .w{color:var(--accent);font-weight:500}
+  .ranklist{counter-reset:r}
+  .rankrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .rankrow:last-child{border-bottom:0}
+  .rankrow .rn{flex:0 0 26px;height:26px;border-radius:50%;background:var(--accent-weak);color:var(--accent);
+    font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center}
+  .rankrow .rt{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .rankrow .rt:hover{color:var(--accent);text-decoration:underline}
+  .rankrow .rc{color:var(--muted);font-size:12px}
+  /* ---- iterated stats page: tabs + dense layout ---- */
+  .stabs{display:flex;gap:8px;margin-bottom:20px;border-bottom:1px solid var(--line);padding-bottom:0}
+  .stab{font:inherit;font-size:13.5px;font-weight:600;color:var(--muted);background:none;border:0;
+    border-bottom:2px solid transparent;padding:8px 14px 10px;cursor:pointer;margin-bottom:-1px;transition:.12s}
+  .stab:hover{color:var(--ink)}
+  .stab.on{color:var(--accent);border-bottom-color:var(--accent)}
+  .spane.hide{display:none}
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:760px){.twocol{grid-template-columns:1fr}}
+  .twocol .statsec{margin-bottom:0}
+  .h3sub{font-weight:400;color:var(--muted);font-size:12px}
+  .subh{font-size:12px;color:var(--muted);margin-bottom:7px}
+  /* compact override: tighter cards + sections for higher info density */
+  .statgrid{grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px;margin-bottom:20px}
+  .statcard{padding:13px 14px;border-radius:10px}
+  .statcard .num{font-size:23px}
+  .statcard .lbl{font-size:12px}
+  .statsec{padding:16px 18px;margin-bottom:18px}
+  .statsec h3{margin:0 0 13px;font-size:14.5px}
+  /* mini stat grid (interaction efficiency) */
+  .minigrid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .minicard{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:11px 12px}
+  .minicard .mn{font-size:19px;font-weight:700;color:var(--accent);line-height:1.1}
+  .minicard .ml{font-size:11.5px;color:var(--muted);margin-top:3px}
+  /* donut */
+  .donutwrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+  .donutsvg{width:140px;height:140px;flex:0 0 auto}
+  .lglist{flex:1;min-width:160px;display:flex;flex-direction:column;gap:6px}
+  .lgrow{display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .lgdot{width:10px;height:10px;border-radius:3px;flex:0 0 auto}
+  .lgname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lgval{color:var(--muted);font-size:12px;flex:0 0 auto}
+  /* split bar */
+  .splitbar{display:flex;height:24px;border-radius:6px;overflow:hidden;background:var(--bg)}
+  .sbseg{display:block;height:100%}
+  .splitleg{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;font-size:12.5px}
+  .sblg{display:flex;align-items:center;gap:6px}
+  /* weekday strip */
+  .wdstrip{display:grid;grid-template-columns:repeat(7,1fr);gap:7px}
+  .wdcell{text-align:center}
+  .wdbox{height:46px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600}
+  .wdlbl{font-size:11px;color:var(--muted);margin-top:4px}
+  .projsec{border-bottom:1px solid var(--line);padding:10px 14px 12px;flex:0 0 auto;max-height:30vh;overflow:auto}
+  .projhd{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
+  /* collapsible top-level sections (Projects / Chats / Design) */
+  .navsec{border-bottom:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .navsec.open{flex:1 1 auto;overflow:hidden}
+  .navsec.closed{flex:0 0 auto}
+  .navhd{display:flex;align-items:center;gap:9px;padding:11px 16px;cursor:pointer;user-select:none;
+    font-size:13px;font-weight:700;color:var(--ink);background:var(--panel);transition:.12s}
+  .navhd:hover{background:var(--bg)}
+  .navhd .chev{flex:0 0 auto;width:14px;height:14px;color:var(--muted);transition:transform .18s}
+  .navsec.open .navhd .chev{transform:rotate(90deg)}
+  .navhd .nicon{flex:0 0 auto;width:17px;height:17px;color:var(--accent);display:flex;align-items:center}
+  .navhd .nicon svg{width:17px;height:17px;display:block}
+  .navhd .ntitle{flex:1;min-width:0}
+  .navhd .ncount{flex:0 0 auto;font-size:11px;font-weight:600;color:var(--muted);background:var(--bg);
+    border:1px solid var(--line);border-radius:999px;padding:1px 8px;min-width:20px;text-align:center}
+  .navbody{overflow:auto;flex:1 1 auto;min-height:0}
+  .navsec.closed .navbody{display:none}
+  .navempty{padding:14px 16px;color:var(--muted);font-size:12px}
+  .projitem{padding:9px 11px;border:1px solid var(--line);border-radius:9px;margin-bottom:7px;cursor:pointer;background:var(--bg)}
+  .projitem:hover{border-color:var(--accent);background:var(--accent-weak)}
+  .projitem.sel{border-color:var(--accent);background:var(--accent-weak);box-shadow:inset 3px 0 0 var(--accent)}
+  /* conversations nested under the selected project */
+  .projconvs{margin:-2px 0 9px 8px;border-left:2px solid var(--accent-weak);padding-left:8px}
+  .projconv-hd{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin:6px 0 6px 3px}
+  .projconv{padding:7px 9px;border-radius:7px;cursor:pointer;margin-bottom:4px;background:var(--panel);border:1px solid transparent;transition:.1s}
+  .projconv:hover{background:var(--bg);border-color:var(--line)}
+  .projconv.sel{background:var(--accent-weak);box-shadow:inset 3px 0 0 var(--accent)}
+  .projconv .pct{font-weight:600;font-size:12.5px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .projconv .pcm{color:var(--muted);font-size:11px;margin-top:2px}
+  .projn{font-weight:600;font-size:13px;color:var(--ink)}
+  .projd{font-size:12px;color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .projmeta{font-size:12px;color:var(--muted)}
+  .projprompt{font-size:14px;line-height:1.65;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:14px 16px;white-space:normal}
+  .projprompt h1,.projprompt h2,.projprompt h3{font-size:15px;margin:12px 0 6px}
+  .projprompt pre{background:#1f1e1c;color:#e8e6e0;padding:10px;border-radius:6px;overflow:auto}
+  .docitem{padding:9px 0;border-bottom:1px solid var(--line)}
+  .docitem:last-child{border-bottom:0}
+  .docn{font-weight:600;font-size:13px;margin-bottom:4px}
+  /* project: section header with an action button on the right */
+  .statsec-hd{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  .statsec-hd h3{flex:1;min-width:0}
+  /* project: knowledge-file row with download button */
+  .docrow{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+  .docrow .docn{flex:1;min-width:0;margin-bottom:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .docbtns{flex:0 0 auto;display:flex;align-items:center;gap:8px}
+  .docsize{font-size:11px;color:var(--muted)}
+  .convhead h2{margin:0 0 6px;font-size:18px}
+  .convhead .meta{color:var(--muted);font-size:12px;display:flex;gap:14px;flex-wrap:wrap}
+  .thread{overflow:auto;flex:1;padding:22px;scroll-behavior:smooth}
+  .msg{max-width:820px;margin:0 auto 18px}
+  .who{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;margin-bottom:6px;display:flex;gap:8px;align-items:center}
+  .who .ts{font-weight:400;color:var(--muted);letter-spacing:0;text-transform:none}
+  .branchnav{display:inline-flex;align-items:center;gap:4px;margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none}
+  .brbtn{font:inherit;font-size:13px;line-height:1;border:1px solid var(--line);background:var(--bg);
+    border-radius:5px;padding:1px 6px;cursor:pointer;color:var(--ink)}
+  .brbtn:hover:not(:disabled){background:#efece4;border-color:var(--accent)}
+  .brbtn:disabled{opacity:.35;cursor:default}
+  .brcount{font-size:11px;color:var(--muted);min-width:30px;text-align:center}
+  .brlabel{font-size:11px;color:var(--accent);font-weight:500;margin-right:2px}
+  .brbanner{font-size:12px;color:#8a6d1f;background:#fcf7e8;border:1px solid #e8d9a8;border-radius:7px;
+    padding:6px 10px;margin-bottom:10px}
+  .brbanner b{color:#6b5a2a}
+  .msgactions{max-width:820px;margin:2px auto 0;padding-left:2px;height:24px;opacity:0;transition:opacity .12s}
+  .msg:hover .msgactions{opacity:1}
+  .copybtn{display:inline-flex;align-items:center;gap:5px;font:inherit;font-size:12px;color:var(--muted);
+    background:none;border:1px solid transparent;border-radius:6px;padding:3px 8px;cursor:pointer}
+  .copybtn:hover{background:var(--bg);border-color:var(--line);color:var(--ink)}
+  .copybtn.copied{color:#3c8a4e;border-color:#cfe0d6;background:#f3f8f5}
+  .copybtn svg{flex:0 0 auto}
+  .scrollnav{position:absolute;right:18px;bottom:20px;display:flex;flex-direction:column;gap:8px;z-index:10}
+  .snbtn{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);background:var(--panel);
+    color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 2px 10px #00000014;transition:.12s}
+  .snbtn:hover{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 4px 14px #cc6b3f44}
+  .snbtn:active{transform:translateY(1px)}
+  .snbtn.snoff{opacity:.3;pointer-events:none}
+  .bubble{border:1px solid var(--line);border-radius:12px;padding:14px 16px;background:var(--asst-bg);overflow-wrap:break-word}
+  .msg.human .who{color:var(--human)}
+  .msg.human .bubble{background:var(--human-bg);border-color:#d6e0f5}
+  .bubble p{margin:0 0 10px}.bubble p:last-child{margin:0}
+  .bubble pre{background:var(--code-bg);color:var(--code-ink);padding:12px 14px;border-radius:8px;overflow:auto;
+    font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;margin:10px 0}
+  .bubble code{background:#00000010;padding:1px 5px;border-radius:4px;
+    font:.92em ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  .bubble pre code{background:none;padding:0}
+  .bubble h1,.bubble h2,.bubble h3{margin:14px 0 8px;line-height:1.3}
+  .bubble h1{font-size:1.3em}.bubble h2{font-size:1.18em}.bubble h3{font-size:1.05em}
+  .bubble ul,.bubble ol{margin:8px 0;padding-left:22px}.bubble li{margin:3px 0}
+  .bubble blockquote{border-left:3px solid var(--line);margin:8px 0;padding:2px 0 2px 14px;color:var(--muted)}
+  .bubble a{color:var(--accent)}
+  .bubble table{width:max-content;max-width:100%;border-collapse:separate;border-spacing:0;margin:14px 0 16px;
+    font-size:13.5px;background:#fff;border:1px solid #eadfd3;border-radius:12px;overflow:hidden;
+    box-shadow:0 1px 0 #fff inset,0 12px 26px #2b221410}
+  .bubble th,.bubble td{border:0;border-right:1px solid #eee5db;border-bottom:1px solid #eee5db;
+    padding:9px 13px;text-align:left;vertical-align:top;line-height:1.55}
+  .bubble th:last-child,.bubble td:last-child{border-right:0}
+  .bubble tr:last-child td{border-bottom:0}
+  .bubble th{background:linear-gradient(180deg,#fff7f1 0%,#fff1e8 100%);color:#2b2620;font-weight:750;
+    border-bottom-color:#ead7c8;box-shadow:0 1px 0 #ffffffcc inset,0 -1px 0 #ead7c8 inset}
+  .bubble tbody tr:nth-child(even) td{background:#fffdfa}
+  .bubble tbody tr:hover td{background:#fff4ec}
+  .attach{font-size:12px;color:var(--muted);margin-top:8px;display:flex;gap:6px;flex-wrap:wrap}
+  .attach .a{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:2px 8px}
+  .think{margin:0 0 12px;border:1px solid #e8d9a8;background:#fcf7e8;border-radius:8px;overflow:hidden}
+  .think summary{cursor:pointer;padding:8px 12px;font-size:12px;color:#8a6d1f;font-weight:600;user-select:none;list-style:none}
+  .think summary::-webkit-details-marker{display:none}
+  .think summary:hover{background:#f7efd4}
+  .think[open] summary{border-bottom:1px solid #e8d9a8}
+  .thinkbody{padding:10px 14px;font-size:13px;color:#6b5a2a;background:#fffdf5}
+  .thinkbody p{margin:0 0 8px}.thinkbody p:last-child{margin:0}
+  .thinkbody pre{background:#3a3320;color:#f0e8d0}
+  .toolacts{margin:0 0 12px;border:1px solid var(--line);background:var(--bg);border-radius:8px;overflow:hidden}
+  .toolacts summary{cursor:pointer;padding:8px 12px;font-size:12px;color:var(--muted);font-weight:600;user-select:none;list-style:none}
+  .toolacts summary::-webkit-details-marker{display:none}
+  .toolacts summary:hover{background:#efece4}
+  .toolacts[open] summary{border-bottom:1px solid var(--line)}
+  .toolbody{padding:6px 12px}
+  .toolrow{display:flex;gap:10px;align-items:baseline;padding:3px 0;font-size:13px}
+  .tname{color:var(--ink);font-weight:600;flex:0 0 auto;min-width:64px}
+  .tdet{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+  .files{margin:12px 0;border:1px solid var(--accent);border-radius:10px;overflow:hidden;background:#fff}
+  .filehd{font-size:12px;font-weight:600;color:var(--accent);padding:8px 12px;background:var(--accent-weak);border-bottom:1px solid var(--accent)}
+  .filerow{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--line)}
+  .filerow:last-child{border-bottom:0}
+  .ficon{font-size:16px}
+  .fname{font-weight:600;font-size:13px;flex:1;word-break:break-all}
+  .fsize{color:var(--muted);font-size:12px;flex:0 0 auto}
+  .fsize.nocontent{color:#b8860b;font-style:italic}
+  .fbtns{display:flex;gap:6px;flex:0 0 auto}
+  .fbtn{font:inherit;font-size:12px;border:1px solid var(--line);background:var(--bg);border-radius:6px;padding:4px 10px;cursor:pointer;color:var(--ink);text-decoration:none;display:inline-block;line-height:1.35}
+  .fbtn:hover{background:#efece4}
+  .fbtn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .fbtn.primary:hover{background:#b85a30}
+  .uploads{margin:0 0 12px;border:1px solid #cbd5e6;background:#eef3fb;border-radius:10px;overflow:hidden}
+  .uploadhd{font-size:12px;font-weight:600;color:#3a5a9a;padding:8px 12px;background:#e2eaf7;border-bottom:1px solid #cbd5e6}
+  .uprow{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid #d8e0ee;flex-wrap:wrap}
+  .uprow:last-child{border-bottom:0}
+  .upicon{font-size:17px}
+  .upthumb{flex:0 0 auto;width:64px;height:64px;border:1px solid #cbd5e6;border-radius:8px;overflow:hidden;background:#fff;display:flex;align-items:center;justify-content:center}
+  .upthumb img{max-width:100%;max-height:100%;display:block}
+  .upname{font-weight:600;font-size:13px;word-break:break-all}
+  .upsize{color:var(--muted);font-size:12px}
+  .upactions{display:flex;gap:6px;align-items:center}
+  .upnote{color:#b8860b;font-size:12px;font-style:italic}
+  .uppreview{flex-basis:100%;margin-top:4px}
+  .uppreview summary{cursor:pointer;font-size:12px;color:#3a5a9a;user-select:none}
+  .uptext{margin-top:6px;padding:10px 12px;background:#fff;border:1px solid #d8e0ee;border-radius:7px;
+    font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace}
+  .searches{margin:0 0 12px;border:1px solid #cfe0d6;background:#f3f8f5;border-radius:8px;overflow:hidden}
+  .searches summary{cursor:pointer;padding:8px 12px;font-size:12px;color:#3c7a56;font-weight:600;user-select:none;list-style:none}
+  .searches summary::-webkit-details-marker{display:none}
+  .searches summary:hover{background:#eaf3ee}
+  .searches[open] summary{border-bottom:1px solid #cfe0d6}
+  .srchbody{padding:6px 8px}
+  .srchq{font-size:12px;color:var(--muted);padding:4px 6px 8px}
+  .srchrow{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:6px;text-decoration:none;color:inherit}
+  a.srchrow:hover{background:#eaf3ee}
+  .srcht{font-size:13px;color:var(--ink);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  a.srchrow .srcht{color:#2563eb}
+  .srchh{font-size:11px;color:var(--muted);flex:0 0 auto}
+  .cite{position:relative;display:inline-flex;align-items:center;gap:1px;font-size:11px;line-height:1.4;
+    vertical-align:baseline;margin:0 2px;padding:1px 7px;border-radius:999px;background:#eef1f6;color:#5566;
+    color:#556070;border:1px solid #dde2ea;text-decoration:none;white-space:nowrap;font-weight:500;cursor:pointer}
+  a.cite:hover{background:#e2e8f2;border-color:#c4cedd;color:#2563eb}
+  .citearr{font-size:9px;opacity:.7}
+  .citecard{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+    width:max-content;max-width:280px;background:#fff;color:var(--ink);font-size:12px;font-weight:400;
+    line-height:1.4;text-align:left;white-space:normal;padding:8px 10px;border:1px solid var(--line);
+    border-radius:8px;box-shadow:0 4px 16px #0000001f;opacity:0;visibility:hidden;transition:.12s;z-index:20;pointer-events:none}
+  .cite:hover .citecard{opacity:1;visibility:visible}
+  .citehost{display:block;margin-top:4px;font-size:11px;color:var(--muted)}
+  .visual{margin:16px 0 18px;border:1px solid #eadfd3;border-radius:12px;overflow:hidden;background:#fff;
+    box-shadow:0 10px 28px #2b221412}
+  .visual::before{content:"";display:block;height:3px;background:linear-gradient(90deg,#d97745,#e8b77d,#9dbfaf)}
+  .vcap{font-size:12px;font-weight:750;color:#4a3528;padding:10px 14px;border-bottom:1px solid #ead7c8;
+    background:linear-gradient(135deg,#fff8f2 0%,#ffeede 58%,#fff8f0 100%);display:flex;align-items:center;gap:8px}
+  .vcap::before{content:"";width:8px;height:8px;border-radius:50%;background:#d97745;box-shadow:0 0 0 4px #f7dfcf}
+  .vcap .vtitle{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vdl{font:inherit;font-size:12px;font-weight:700;border:1px solid #e5c6ad;background:#fffaf6;color:#a84f2b;
+    border-radius:999px;padding:4px 10px;cursor:pointer;line-height:1;box-shadow:0 1px 0 #fff inset;transition:.12s}
+  .vdl:hover{background:#d97745;border-color:#d97745;color:#fff;box-shadow:0 4px 12px #d9774540}
+  .vsvg{padding:18px;text-align:center;overflow:auto;background:linear-gradient(180deg,#fff,#fdfbf8)}
+  .vsvg svg{max-width:100%;height:auto}
+  .mermaid{padding:20px;text-align:center;overflow:auto;background:linear-gradient(180deg,#fff,#fdfbf8)}
+  .mermaid svg{max-width:100%;height:auto}
+  .vhtml{width:100%;border:0;display:block;background:#fff;min-height:120px;overflow:hidden}
+  .vsvg-frame{min-height:80px}
+  .visual *::-webkit-scrollbar-button{display:none;width:0;height:0}
+  .visual *::-webkit-scrollbar-corner{background:transparent}
+  .vsrc{border-top:1px solid #ebe5dc;background:#fbfaf7}
+  .vsrc summary{cursor:pointer;font-size:12px;color:#7b7166;padding:9px 14px;user-select:none;font-weight:600}
+  .vsrc summary:hover{background:#f4efe8;color:var(--accent)}
+  .vsrc pre{margin:0;border-radius:0}
+  .visual>pre{margin:0}
+  mark{background:#ffe08a;color:inherit;border-radius:2px;padding:0 1px}
+  /* empty / placeholder */
+  .empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);
+    text-align:center;padding:40px;gap:14px}
+  .empty .star{width:54px;height:54px;opacity:.5}
+  .empty h3{margin:0;color:var(--ink);font-weight:600}
+  .empty code{background:var(--panel);border:1px solid var(--line);padding:2px 7px;border-radius:5px;font-size:13px}
+  .hide{display:none!important}
+  /* scrollbar */
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:#0000001f;border-radius:6px}
+  ::-webkit-scrollbar-thumb:hover{background:#0000002e}
+  @media (max-width:760px){
+    .app{grid-template-columns:1fr}
+    .sidebar{display:none}.sidebar.show{display:flex;position:fixed;inset:0;z-index:5}
+    .back{display:inline-block!important}
+  }
+  .back{display:none;font:inherit;font-size:13px;border:1px solid var(--line);background:var(--bg);
+    border-radius:6px;padding:4px 10px;cursor:pointer;margin-bottom:8px}
+</style>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <svg class="star" viewBox="0 0 24 24" fill="#cc6b3f"><path d="M12 2l1.6 6.8L20 7l-4.5 4.9L20 17l-6.4-1.8L12 22l-1.6-6.8L4 17l4.5-5.1L4 7l6.4 1.8z"/></svg>
+      <b>Claude 导出查看器</b>
+      <span>本地 · 不上传</span>
+    </div>
+    <div class="loadbar">
+      <label class="drop" id="drop">
+        <svg class="dropico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span><b>选择 .zip/.json/图片</b> <span class="dropsub">或拖入此处</span></span>
+        <input type="file" id="file" accept=".zip,.json,image/*,application/zip,application/json" hidden>
+      </label>
+      <div class="loadrow">
+        <input class="search" id="search" placeholder="搜索标题或内容…" disabled>
+        <button class="statsbtn" id="statsbtn" disabled>📊 统计</button>
+      </div>
+      <div class="stats" id="stats"></div>
+    </div>
+
+    <div class="navsec closed" id="sec-projects" data-sec="projects" style="display:none">
+      <div class="navhd" data-toggle="projects">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="nicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h6a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span><span class="ntitle">Projects</span><span class="ncount" id="cnt-projects">0</span>
+      </div>
+      <div class="navbody">
+        <div class="sortrow" id="projsortrow">
+          <span>排序</span>
+          <button data-psort="updated" class="on">最近更新</button>
+          <button data-psort="created">创建时间</button>
+        </div>
+        <div class="projlist" id="projlist" style="padding:8px 14px 12px"></div>
+      </div>
+    </div>
+
+    <div class="navsec closed" id="sec-chats" data-sec="chats" style="display:none">
+      <div class="navhd" data-toggle="chats">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="nicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8z"/></svg></span><span class="ntitle">Chats</span><span class="ncount" id="cnt-chats">0</span>
+      </div>
+      <div class="navbody">
+        <div class="sortrow" id="sortrow">
+          <span>排序</span>
+          <button data-sort="updated" class="on">最近更新</button>
+          <button data-sort="created">创建时间</button>
+          <button data-sort="msgs">消息数</button>
+        </div>
+        <div class="list" id="list" style="padding:8px 14px 12px"></div>
+      </div>
+    </div>
+
+    <div class="navsec closed" id="sec-design" data-sec="design" style="display:none">
+      <div class="navhd" data-toggle="design">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        <span class="nicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg></span><span class="ntitle">Design</span><span class="ncount" id="cnt-design">0</span>
+      </div>
+      <div class="navbody">
+        <div class="list" id="designlist" style="padding:8px 14px 12px"></div>
+      </div>
+    </div>
+  </aside>
+
+  <section class="main">
+    <div class="empty" id="empty">
+      <svg class="star" viewBox="0 0 24 24" fill="#cc6b3f"><path d="M12 2l1.6 6.8L20 7l-4.5 4.9L20 17l-6.4-1.8L12 22l-1.6-6.8L4 17l4.5-5.1L4 7l6.4 1.8z"/></svg>
+      <h3>加载你的 Claude 数据</h3>
+      <div>在左侧直接选择 Claude 导出的 <code>.zip</code> 数据包（无需手动解压）<br>所有处理都在你浏览器本地完成，文件不会被上传到任何服务器。</div>
+    </div>
+    <div id="convwrap" class="hide" style="display:flex;flex-direction:column;flex:1;min-height:0;position:relative">
+      <div class="convhead">
+        <div class="convtop">
+          <button class="back" id="back">← 返回列表</button>
+          <h2 id="convtitle"></h2>
+          <div class="convexport">
+            <button class="expbtn" id="expmd" title="导出为 Markdown 文件">↓ MD</button>
+            <button class="expbtn pdf" id="exppdf" title="导出为 PDF（打印）">↓ PDF</button>
+          </div>
+        </div>
+        <div class="meta" id="convmeta"></div>
+        <div class="convsearch">
+          <input class="csearchin" id="csearchin" placeholder="在当前对话中搜索…">
+          <button class="csearchbtn" id="csearchbtn">搜索</button>
+          <span class="csearchcount" id="csearchcount"></span>
+          <button class="snbtn sm" id="cprev" title="上一个匹配">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+          </button>
+          <button class="snbtn sm" id="cnext" title="下一个匹配">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="thread" id="thread"></div>
+      <div class="scrollnav" id="scrollnav">
+        <button class="snbtn" id="sntop" title="回到顶部">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+        </button>
+        <button class="snbtn" id="snbot" title="跳到底部">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<div class="statspage hide" id="statspage">
+  <div class="statshead">
+    <button class="statsbackbtn" id="statsback">← 返回对话列表</button>
+    <h2>📊 数据统计分析</h2>
+    <span class="statssub" id="statssub"></span>
+  </div>
+  <div class="statsbody" id="statsbody"></div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+let DATA=[], view=[], sel=null, selProj=null, sortKey="updated", projSortKey="updated", q="";
+let _statTab="overview"; // active tab on the stats page
+let PROJECTS=[]; // loaded project definitions (from projects/*.json)
+let BRANCH_CHOICES={}; // parentUuid -> chosen sibling index, for the open conversation
+let CSEARCH={matches:[], idx:-1}; // in-conversation search state
+
+/* ---------- lenient field readers (handle export variations) ---------- */
+const pick=(o,keys,d="")=>{for(const k of keys){if(o&&o[k]!=null&&o[k]!=="")return o[k]}return d};
+// Parse a date value to a numeric timestamp; return 0 for missing/invalid so sorts stay stable.
+const tval=v=>{const t=new Date(v).getTime();return isNaN(t)?0:t};
+function hostOfSafe(u){try{return new URL(u).hostname.replace(/^www\./,"")}catch(e){return ""}}
+function cssEsc(s){return (window.CSS&&CSS.escape)?CSS.escape(s+""):(s+"").replace(/["\\]/g,"\\$&")}
+const convTitle = c => pick(c,["name","title","summary"],"") || "(无标题对话)";
+const convCreated = c => pick(c,["created_at","create_time","createdAt"]);
+const convUpdated = c => pick(c,["updated_at","update_time","updatedAt"]) || convCreated(c);
+const convModel = c => pick(c,["model","model_slug",""]);
+const convMsgs = c => pick(c,["chat_messages","messages","chatMessages"],[]) || [];
+function msgHasRenderableContent(m){
+  if(!m)return false;
+  const p=msgParts(m);
+  if((p.text||"").trim() || (p.thinking||"").trim())return true;
+  if((p.thoughts&&p.thoughts.length) || (p.visuals&&p.visuals.length))return true;
+  if((p.files&&p.files.length) || (p.searches&&p.searches.length) || (p.tools&&p.tools.length))return true;
+  if(msgUploads(m).length)return true;
+  return false;
+}
+function convDisplayMsgs(c){ return convMsgs(c).filter(msgHasRenderableContent); }
+function convDisplayMsgCount(c){ return convDisplayMsgs(c).length; }
+function convHasMessages(c){ return convDisplayMsgCount(c) > 0; }
+function asArray(v){ return Array.isArray(v)?v:(v!=null?[v]:[]); }
+// A conversation's project linkage is not guaranteed in the GDPR export, so read it
+// leniently. We try many strategies because different export tools store it differently.
+function convProjUuid(c){
+  const v=pick(c,["project_uuid","projectUuid","project_id","projectId","projectUUID"],"");
+  if(v)return v;
+  const p=c&&c.project; if(p&&typeof p==="object")return pick(p,["uuid","id","project_uuid"],"");
+  return "";
+}
+function convProjName(c){
+  const p=c&&c.project;
+  if(p&&typeof p==="object")return pick(p,["name","title"],"");
+  if(typeof p==="string")return p;
+  return pick(c,["project_name","projectName"],"");
+}
+// Collect every UUID-looking value the project object exposes as "its conversations":
+// some exports nest a conversations / chat_conversations / chats / uuids array.
+function projConvUuidSet(p){
+  const set=new Set();
+  if(!p||typeof p!=="object")return set;
+  for(const key of ["conversations","chat_conversations","chats","conversation_uuids","conversationUuids","uuids"]){
+    const arr=p[key];
+    if(Array.isArray(arr)){
+      for(const x of arr){
+        if(typeof x==="string")set.add(x);
+        else if(x&&typeof x==="object"){const u=pick(x,["uuid","id","conversation_uuid","conversationId"],""); if(u)set.add(u);}
+      }
+    }
+  }
+  return set;
+}
+// Does any top-level string field of the conversation equal the project's uuid? (catches
+// exports that use an unexpected field name like "parent_project" etc.)
+function convMentionsUuid(c,uuid){
+  if(!uuid||!c||typeof c!=="object")return false;
+  for(const k in c){
+    const v=c[k];
+    if(typeof v==="string" && v===uuid) return true;
+    if(v && typeof v==="object" && !Array.isArray(v)){
+      for(const k2 in v){ if(typeof v[k2]==="string" && v[k2]===uuid) return true; }
+    }
+  }
+  return false;
+}
+// Return the conversations belonging to project p, trying (in order): the project's own
+// conversation list, a uuid match on the conversation, a deep uuid scan, then a name match.
+function convsForProject(p){
+  if(!p)return [];
+  const uuid=(p.uuid||p.id||"")+"";
+  const name=(p.name||"").trim();
+  const own=projConvUuidSet(p); // uuids the project itself lists
+  return DATA.map((c,_i)=>({c,_i})).filter(({c})=>{
+    if(!convHasMessages(c))return false;
+    if(c._design)return false; // design chats live in their own section
+    const cuid=(pick(c,["uuid","id"],"")+"");
+    if(own.size && cuid && own.has(cuid))return true;     // project lists this conversation
+    const cu=convProjUuid(c);
+    if(uuid&&cu&&cu===uuid)return true;                   // conversation points at project (common fields)
+    if(uuid&&convMentionsUuid(c,uuid))return true;        // deep scan for the uuid anywhere
+    const cn=(convProjName(c)||"").trim();
+    if(name&&cn&&cn===name)return true;                   // name match (last resort)
+    return false;
+  });
+}
+
+// Build the conversation tree from parent_message_uuid and return the linear list of
+// messages on the *active* path. Conversations branch when a message is edited or a reply
+// is regenerated: siblings share a parent. choices{parentUuid->index} records which sibling
+// the user selected at each branch; by default we follow the newest sibling (like the web
+// UI showing "2/2"). Each returned message carries _branch={siblings:[uuids], index, parent}
+// when it sits at a branch point, so the renderer can draw < n/m > controls.
+function activePath(c, choices){
+  const msgs=convMsgs(c);
+  if(!msgs.length) return [];
+  const hasParent=msgs.some(m=>m&&"parent_message_uuid" in m);
+  if(!hasParent) return msgs.map(m=>(m._branch=null,m)); // flat conversation, no tree
+  const byUuid={}; const children={};
+  for(const m of msgs){ byUuid[m.uuid]=m; }
+  for(const m of msgs){
+    const p=m.parent_message_uuid||"__root__";
+    (children[p]=children[p]||[]).push(m);
+  }
+  // order siblings by created_at so "1,2,3" matches chronological edits
+  for(const p in children){
+    children[p].sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
+  }
+  // find the root set: children of the special root, or of a parent not present in the export
+  let roots=children["__root__"]||[];
+  if(!roots.length){
+    // fall back: messages whose parent isn't in byUuid are roots
+    roots=msgs.filter(m=>{const p=m.parent_message_uuid;return !p||!byUuid[p]});
+    roots.sort((a,b)=>new Date(a.created_at||0)-new Date(b.created_at||0));
+  }
+  const path=[];
+  function walk(siblings, parentKey){
+    if(!siblings||!siblings.length) return;
+    let idx = siblings.length-1; // default: newest sibling
+    if(choices && parentKey in choices) idx=Math.max(0,Math.min(choices[parentKey],siblings.length-1));
+    const chosen=siblings[idx];
+    chosen._branch = siblings.length>1 ? {count:siblings.length, index:idx, parent:parentKey} : null;
+    path.push(chosen);
+    walk(children[chosen.uuid], chosen.uuid);
+  }
+  walk(roots, "__root__");
+  return path;
+}
+const msgSender = m => (pick(m,["sender","role","author"],"")+"").toLowerCase();
+
+function firstStringDeep(v, keys){
+  if(v==null)return "";
+  if(typeof v==="string")return v;
+  if(Array.isArray(v)){
+    for(const x of v){const s=firstStringDeep(x,keys); if(s)return s;}
+    return "";
+  }
+  if(typeof v==="object"){
+    for(const k of keys){ if(v[k]!=null){const s=firstStringDeep(v[k],keys); if(s)return s;} }
+  }
+  return "";
+}
+function shortThoughtFallback(text){
+  const s=(text+"").replace(/\s+/g," ").trim();
+  if(!s)return "";
+  const first=(s.match(/^(.{8,80}?[。！？.!?])\s/)||s.match(/^(.{8,80}?[。！？.!?])$/)||[])[1]||"";
+  if(first && first.length<=80)return first;
+  return s.length<=46?s:s.slice(0,46)+"…";
+}
+function thinkingTitle(b,text){
+  const keys=["summary","title","headline","name","label","caption","text","content"];
+  let raw=pick(b,["summary","title","headline","name","label","caption","thinking_summary","thinkingSummary","summary_text","summaryText"],"");
+  if(raw&&typeof raw!=="string")raw=firstStringDeep(raw,keys);
+  if(!raw){
+    raw=firstStringDeep(b&&b.summaries,keys)
+      || firstStringDeep(b&&b.summary_blocks,keys)
+      || firstStringDeep(b&&b.summaryBlocks,keys)
+      || firstStringDeep(b&&b.content_blocks,keys)
+      || firstStringDeep(b&&b.contentBlocks,keys);
+  }
+  let s=(raw+"").replace(/\s+/g," ").trim();
+  const body=(text+"").replace(/\s+/g," ").trim();
+  if(!s||s===body){
+    s=shortThoughtFallback(text);
+  }
+  if(!s||s===body)return "";
+  if(s.length>80)s=s.slice(0,80)+"…";
+  return s;
+}
+
+// Pull renderable content out of one artifact/tool block.
+// Returns {kind, code, title, lang} or null. kind ∈ svg|mermaid|html|code|file.
+function readArtifact(b){
+  if(!b||typeof b!=="object")return null;
+  const ty=b.type;
+  const nm=(b.name||"")+"";
+  const isWidget=/show_widget|visualize|imagine/i.test(nm); // Imagine/Visualize in-line widgets
+  // The artifact tool stores the real payload under .input
+  const inp = (ty==="tool_use"||ty==="server_tool_use") ? (b.input||{}) : b;
+  // mime/type can live in several places
+  const mime = (inp.type||inp.mimeType||inp.media_type||b.mime||"")+"";
+  // the actual source code/content (widget_code is used by the Imagine/visualize tool)
+  let code = inp.widget_code!=null?inp.widget_code
+            :inp.content!=null?inp.content
+            :inp.source!=null?inp.source
+            :inp.code!=null?inp.code
+            :inp.svg!=null?inp.svg
+            :inp.html!=null?inp.html
+            :"";
+  if(typeof code!=="string") code = (code&&code.text) ? code.text : "";
+  const title = inp.title||inp.name||b.name||"";
+  const lang  = inp.language||"";
+  if(!code){
+    // tool_result blocks: dig into nested content
+    const rc=b.content;
+    if(Array.isArray(rc)){for(const x of rc){if(x&&typeof x.text==="string"&&x.text){code=x.text;break}}}
+    else if(typeof rc==="string")code=rc;
+  }
+  if(!code) return null;
+  const trimmed=code.trim();
+  // classify
+  if(/svg\+xml/i.test(mime) || /^<svg[\s>]/i.test(trimmed))            return {kind:"svg",code,title,lang};
+  if(/mermaid/i.test(mime))                                            return {kind:"mermaid",code,title,lang};
+  if(/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|gantt|pie|erDiagram|journey|mindmap)\b/i.test(trimmed))
+                                                                       return {kind:"mermaid",code,title,lang};
+  if(/text\/html/i.test(mime) || /vnd\.ant\.react/i.test(mime))        return {kind:"html",code,title,lang};
+  // any HTML-ish fragment (starts with a tag), or anything from a visualize widget,
+  // is rendered as HTML. widget_code is almost always an HTML fragment that may begin
+  // with any element (e.g. <h2 class="sr-only">…), so don't require specific tags.
+  if(/^<[a-z!][\s\S]*>/i.test(trimmed) || (isWidget && inp.widget_code!=null))
+                                                                       return {kind:"html",code,title,lang};
+  if(/vnd\.ant\.code/i.test(mime) || lang)                             return {kind:"code",code,title,lang};
+  return {kind:"code",code,title,lang}; // default: show source
+}
+
+// Split a message into visible answer text, hidden thinking, and rendered visuals.
+function msgParts(m){
+  const c = m && m.content;
+  if(Array.isArray(c)){
+    const text=[], think=[], flow=[], visuals=[], tools=[], files=[], edits=[], presented=[], searches=[];
+    // First pass: build a url -> {title} map from web-search results so citation chips
+    // (which only carry a url) can show the source's real title on hover.
+    const srcTitle={};
+    for(const b of c){
+      if(!b||typeof b!=="object")continue;
+      const nm=(b.name||"")+"";
+      if((b.type==="tool_result"||b.type==="web_search_tool_result")&&/web_search|web_fetch/i.test(nm)){
+        const items=Array.isArray(b.content)?b.content:[];
+        for(const it of items){ if(it&&it.url) srcTitle[it.url]=it.title||it.url; }
+      }else if(b.type==="web_search_tool_result"||b.type==="web_search_result"){
+        const items=Array.isArray(b.content)?b.content:[b];
+        for(const it of items){ if(it&&it.url) srcTitle[it.url]=it.title||it.url; }
+      }
+    }
+    for(const b of c){
+      if(typeof b==="string"){text.push(b);flow.push({type:"text",text:b});continue}
+      if(!b||typeof b!=="object")continue;
+      const ty=b.type;
+      if(ty==="thinking"||ty==="redacted_thinking"){
+        const t=b.thinking||b.text||b.content||b.summary||"[加密的思考内容]";
+        const title=thinkingTitle(b,t);
+        think.push(t);
+        flow.push({type:"thinking",text:t,title});
+      }else if(ty==="text"||ty===undefined){
+        if(typeof b.text==="string"&&b.text.length){
+          let t=b.text;
+          // Per-claim citations. Claude's export attaches them to a single text block with
+          // start_index/end_index (character offsets) and the URL under details.url (no
+          // title). We insert a source chip at each citation's end_index so it lands right
+          // after the sentence it supports, then merge chips that share the same end.
+          if(Array.isArray(b.citations)&&b.citations.length){
+            const cites=b.citations.map(ct=>{
+              const url=(ct.details&&(ct.details.url||ct.details.source))||ct.url||ct.source||"";
+              const ttl=ct.title||(ct.details&&ct.details.title)||srcTitle[url]||"";
+              const at=(typeof ct.end_index==="number")?ct.end_index
+                      :(typeof ct.end_char_index==="number")?ct.end_char_index:t.length;
+              return {at:Math.max(0,Math.min(at,t.length)), url, ttl};
+            }).filter(c=>c.url||c.ttl).sort((a,b2)=>a.at-b2.at);
+            // build chips grouped by insertion point, inserting from the end backwards
+            const byAt={}; for(const c of cites){(byAt[c.at]=byAt[c.at]||[]).push(c)}
+            const points=Object.keys(byAt).map(Number).sort((a,b2)=>b2-a); // descending
+            for(const at of points){
+              const chips=byAt[at].map(c=>`\u0001CITE${encodeURIComponent(c.url)}\u0002${encodeURIComponent(c.ttl)}\u0003`).join("");
+              t=t.slice(0,at)+chips+t.slice(at);
+            }
+          }
+          text.push(t);
+          flow.push({type:"text",text:t});
+        }
+      }else if(ty==="web_search_tool_result"||ty==="web_search_result"){
+        // search results block — collect the source links for a "Searched the web" panel
+        const results = Array.isArray(b.content)?b.content:(b.content?[b.content]:[b]);
+        for(const r of results){
+          if(r&&(r.url||r.title)) searches.push({type:"result",title:r.title||r.url,url:r.url||""});
+        }
+      }else if(ty==="tool_use"||ty==="server_tool_use"||ty==="tool_result"){
+        const nm=(b.name||"")+"";
+        // setup/documentation tool calls (read_me returns the tool's own manual) — drop silently
+        if(/read_me|tool_search|registry/i.test(nm)) continue;
+        // web search query: record what was searched (shown in the search panel header)
+        if(/web_search|web_fetch/i.test(nm)){
+          if(ty==="tool_result"){
+            // some exports attach results to the tool_result instead of a separate block
+            const rs=Array.isArray(b.content)?b.content:[];
+            for(const r of rs){ const x=r&&(r.url||r.title)?r:(r&&r.content);
+              if(x&&(x.url||x.title)) searches.push({type:"result",title:x.title||x.url,url:x.url||""}); }
+            continue;
+          }
+          const inp2=b.input||{};
+          const qq=inp2.query||inp2.q||inp2.url||"";
+          if(qq) searches.push({type:"query",query:qq+""});
+          continue;
+        }
+        // visualize widgets + classic artifacts: the tool_use carries renderable content
+        // (SVG/mermaid/HTML). Render it; drop the visualize boilerplate tool_result.
+        if(/show_widget|visualize|imagine|artifact/i.test(nm)){
+          if(ty==="tool_result") continue;
+          const art=readArtifact(b); if(art){art._inFlow=true;visuals.push(art);flow.push({type:"visual",visual:art});}
+          continue;
+        }
+        // Some exports don't name the artifact tool but the payload is clearly renderable
+        // (svg/mermaid/html in input). Try to render before falling back to a tool summary.
+        if(ty==="tool_use" && !/create_file|write_file|str_replace|edit|bash|present_files|present_fs_item|copy_files|read_file|show_html|done/i.test(nm)){
+          const art=readArtifact(b);
+          if(art && (art.kind==="svg"||art.kind==="mermaid"||art.kind==="html")){art._inFlow=true;visuals.push(art);flow.push({type:"visual",visual:art});continue}
+        }
+        // file/code-execution tools (view, create_file, str_replace, bash, present_files,
+        // edit, run, …). The web UI shows these as collapsed activity, not inline content.
+        // We summarise them into a compact line. If a create_file carries the full file
+        // content (file_text), we also capture it so the user can download / open the file.
+        if(ty==="tool_use"){
+          const inp2=b.input||{};
+          const content = inp2.file_text!=null?inp2.file_text
+                        : inp2.content!=null && typeof inp2.content==="string" && /^(create|write)/i.test(nm)?inp2.content
+                        : null;
+          const path = inp2.path||inp2.file_path||inp2.filename||inp2.output_path||"";
+          if(/create_file|write_file|create/i.test(nm) && content!=null && path){
+            files.push({path, name:path.split("/").pop(), content});
+          }else if(/str_replace|edit/i.test(nm) && path && (inp2.old_str!=null||inp2.old_string!=null)){
+            const old=inp2.old_str!=null?inp2.old_str:inp2.old_string;
+            const neu=inp2.new_str!=null?inp2.new_str:(inp2.new_string!=null?inp2.new_string:"");
+            edits.push({path, old, neu});
+          }else if(/bash/i.test(nm) && typeof inp2.command==="string"){
+            // bash often writes files via heredoc: `cat > path <<'EOF' ... EOF`
+            extractHeredocFiles(inp2.command).forEach(f=>files.push(f));
+          }else if(/present_files|present_fs_item_for_download/i.test(nm)){
+            // present_files marks deliverables. Record the paths; we attach content
+            // (captured from create_file/bash above) after the loop.
+            const fps=inp2.filepaths||inp2.paths||inp2.files||(path?[path]:[]);
+            (Array.isArray(fps)?fps:[fps]).forEach(p=>{ if(p) presented.push(p+"") });
+          }
+          tools.push(summariseTool(nm,inp2));
+        }
+        // tool_result for these: ignore (it's read-file content / "File created…" / bash output)
+        continue;
+      }
+    }
+    // apply str_replace edits to captured files so downloads reflect the final version
+    for(const e of edits){
+      // edit the most recent capture of that path
+      for(let k=files.length-1;k>=0;k--){
+        if(files[k].path===e.path && files[k].content.includes(e.old)){files[k].content=files[k].content.replace(e.old,e.neu);break}
+      }
+    }
+    // dedupe by path, keeping the LAST captured content (final version)
+    const byPath={}; for(const f of files) byPath[f.path]=f;
+    let outFiles=Object.values(byPath);
+    // also index by basename, since bash may write a relative path (toddler.html) while
+    // present_files references an absolute one (/mnt/user-data/outputs/toddler.html)
+    const byName={}; for(const f of outFiles) byName[f.name]=f;
+    // if present_files was used, surface those as the deliverables: attach captured
+    // content where we have it (match by full path, else by filename); if none, list
+    // it with download disabled so the user still sees the file existed.
+    if(presented.length){
+      const seen=new Set();
+      const pres=presented.filter(p=>{if(seen.has(p))return false;seen.add(p);return true}).map(p=>{
+        const base=p.split("/").pop();
+        const hit=byPath[p]||byName[base];
+        return hit || {path:p, name:base, content:null};
+      });
+      // include presented first, then any other captured files not already shown
+      const shownNames=new Set(pres.map(f=>f.name));
+      outFiles=[...pres, ...outFiles.filter(f=>!shownNames.has(f.name))];
+    }
+    const thoughts=think.map(t=>(t+"").trim()).filter(Boolean);
+    return {text:text.join("\n").trim(), thinking:thoughts.join("\n\n").trim(), thoughts, flow, visuals, tools, files:outFiles, searches};
+  }
+  if(typeof c==="string") return {text:c, thinking:"", thoughts:[], flow:[{type:"text",text:c}], visuals:[], tools:[], files:[], searches:[]};
+  const think = pick(m,["thinking","reasoning","thinking_content"],"");
+  const text  = pick(m,["text"],"");
+  const thoughts=(think+"").trim()?[((think+"").trim())]:[];
+  const flow=[]; if(thoughts.length)flow.push({type:"thinking",text:thoughts[0]}); if((text+"").trim())flow.push({type:"text",text:(text+"").trim()});
+  return {text:(text+"").trim(), thinking:(think+"").trim(), thoughts, flow, visuals:[], tools:[], files:[], searches:[]};
+}
+// One-line human summary of a file/code tool call (no content dump).
+// Extract files written by a bash command via heredoc, e.g.
+//   cat > path <<'EOF' ... EOF      |  cat >> path <<EOF ... EOF
+//   python3 - <<'PY' ... PY  (can't recover target reliably — skipped)
+// Returns [{path,name,content}]. Best-effort; only the recoverable cat>file pattern.
+function extractHeredocFiles(cmd){
+  const out=[];
+  // match: cat > FILE <<'DELIM'  (or "DELIM" or DELIM), then body, then DELIM on its own line
+  const re=/cat\s+>{1,2}\s*([^\s<]+)\s*<<\s*['"]?([A-Za-z0-9_]+)['"]?\s*\n([\s\S]*?)\n\2\b/g;
+  let m;
+  while((m=re.exec(cmd))){
+    let path=m[1].replace(/['"]/g,"");
+    const body=m[3];
+    if(path && body && body.length>1){
+      out.push({path, name:path.split("/").pop(), content:body});
+    }
+  }
+  return out;
+}
+// Parse a Python string literal (handles ' " ''' """ and \n \t \\ \' \" escapes).
+// Returns {value, end} or null. `s` starts at the opening quote.
+function pyStr(s, i){
+  let q=s[i]; if(q!=="'"&&q!=='"')return null;
+  let triple=s.substr(i,3)===q+q+q; let delim=triple?q+q+q:q;
+  let j=i+delim.length, out="";
+  while(j<s.length){
+    if(!triple && s[j]==="\n")return null; // unterminated single-line
+    if(s.substr(j,delim.length)===delim){ return {value:out, end:j+delim.length}; }
+    if(s[j]==="\\"){
+      const n=s[j+1];
+      out+= n==="n"?"\n": n==="t"?"\t": n==="r"?"\r": n==="\\"?"\\":
+            n==="'"?"'": n==='"'?'"': n==="\n"?"": n; // line continuation
+      j+=2; continue;
+    }
+    out+=s[j]; j++;
+  }
+  return null;
+}
+// Apply the in-place Python edits found in a bash command to `content`. We support the
+// patterns Claude actually uses: s=s.replace('a','b'), s.replace("a","b"), and
+// s=re.sub(r'pat','repl',s). Best-effort: unknown ops are skipped, so reconstruction
+// degrades gracefully rather than corrupting the file.
+function applyPyEdits(content, pyBody){
+  let s=content;
+  // walk the python source, find replace()/re.sub() calls
+  // s.replace( ARG1 , ARG2 )
+  const reReplace=/\.replace\s*\(/g; let m;
+  // We scan manually because args are string literals with commas inside.
+  let i=0;
+  while(i<pyBody.length){
+    // find next ".replace(" or "re.sub("
+    const rep=pyBody.indexOf(".replace(",i);
+    const sub=pyBody.indexOf("re.sub(",i);
+    let at, kind;
+    if(rep<0&&sub<0)break;
+    if(sub<0||(rep>=0&&rep<sub)){at=rep+".replace(".length;kind="replace";}
+    else {at=sub+"re.sub(".length;kind="sub";}
+    // skip whitespace
+    let p=at; while(p<pyBody.length&&/\s/.test(pyBody[p]))p++;
+    if(kind==="replace"){
+      const a1=pyStr(pyBody,p); if(!a1){i=at;continue;}
+      let q=a1.end; while(q<pyBody.length&&/[\s,]/.test(pyBody[q]))q++;
+      const a2=pyStr(pyBody,q); if(!a2){i=at;continue;}
+      // apply: replace ALL occurrences (python str.replace replaces all)
+      s=s.split(a1.value).join(a2.value);
+      i=a2.end;
+    }else{ // re.sub(pattern, repl, s) — pattern may have r'' prefix
+      // pattern literal (allow optional r/rb prefix)
+      let pp=p; if(/[rbRB]/.test(pyBody[pp])&&(pyBody[pp+1]==="'"||pyBody[pp+1]==='"'))pp++;
+      const pat=pyStr(pyBody,pp); if(!pat){i=at;continue;}
+      let q=pat.end; while(q<pyBody.length&&/[\s,]/.test(pyBody[q]))q++;
+      let rr=q; if(/[rbRB]/.test(pyBody[rr])&&(pyBody[rr+1]==="'"||pyBody[rr+1]==='"'))rr++;
+      const repl=pyStr(pyBody,rr); if(!repl){i=at;continue;}
+      try{
+        // translate python regex to JS (basic: \s \S \d \w . * + ? etc. are compatible;
+        // python named groups / inline flags are rare in these edits)
+        const jsre=new RegExp(pat.value, "g");
+        // python re.sub backrefs \1 -> JS $1
+        const jsRepl=repl.value.replace(/\\(\d)/g,"$$$1");
+        s=s.replace(jsre, jsRepl);
+      }catch(e){ /* skip unsupported pattern */ }
+      i=repl.end;
+    }
+  }
+  return s;
+}
+// Walk an ENTIRE conversation in message order, tracking file creation (create_file,
+// heredoc), copies (cp A B), str_replace edits, and python in-place edits, to resolve
+// the final content of every file — even files built by copy+patch chains across
+// multiple messages. Returns { "/path": {name, content|null, recovered:bool} }.
+function buildFileChain(conv){
+  const fsmap={}; // path -> content string (current state)
+  const msgs=convMsgs(conv);
+  for(const m of msgs){
+    const c=m&&m.content; if(!Array.isArray(c))continue;
+    for(const b of c){
+      if(!b||typeof b!=="object"||b.type!=="tool_use")continue;
+      const nm=(b.name||"")+""; const inp=b.input||{};
+      // create_file / write
+      const content = inp.file_text!=null?inp.file_text
+                    : (inp.content!=null&&typeof inp.content==="string"&&/^(create|write)/i.test(nm))?inp.content:null;
+      const path = inp.path||inp.file_path||inp.filename||inp.output_path||"";
+      if(/create_file|write_file/i.test(nm) && content!=null && path){
+        fsmap[absPath(path)]=content;
+      }else if(/str_replace|edit/i.test(nm) && path && (inp.old_str!=null||inp.old_string!=null)){
+        const old=inp.old_str!=null?inp.old_str:inp.old_string;
+        const neu=inp.new_str!=null?inp.new_str:(inp.new_string!=null?inp.new_string:"");
+        const ap=absPath(path);
+        if(fsmap[ap]!=null && fsmap[ap].includes(old))
+          fsmap[ap]=fsmap[ap].replace(old, neu);
+      }else if(/copy_files/i.test(nm) && Array.isArray(inp.files)){
+        for(const f of inp.files){
+          const src=absPath(f.src||f.source||""), dst=absPath(f.dest||f.destination||"");
+          if(src&&dst&&fsmap[src]!=null)fsmap[dst]=fsmap[src];
+        }
+      }else if(/bash/i.test(nm) && typeof inp.command==="string"){
+        const cmd=inp.command;
+        // heredoc writes
+        extractHeredocFiles(cmd).forEach(f=>{ fsmap[absPath(f.path)]=f.content; });
+        // cp SOURCE DEST (also handle `cp -f`, paths may be bare in `cd outputs && cp a b`)
+        const cpre=/\bcp\s+(?:-[a-zA-Z]+\s+)*([^\s'";|&]+)\s+([^\s'";|&]+)/g; let cm;
+        while((cm=cpre.exec(cmd))){
+          const src=absPath(cm[1]), dst=absPath(cm[2]);
+          if(fsmap[src]!=null) fsmap[dst]=fsmap[src];
+        }
+        // python in-place edits: detect `p="FILE"` ... open(p)...write
+        // Support one edited file per PYEOF block.
+        const blocks=cmd.split(/<<\s*['"]?(?:PYEOF|PY|EOF|PYTHON)['"]?/).slice(1);
+        // Simpler: find every python heredoc body
+        const pyBlocks=[];
+        const pyre=/<<\s*['"]?([A-Za-z0-9_]+)['"]?\s*\n([\s\S]*?)\n\1\b/g; let pm;
+        while((pm=pyre.exec(cmd))){ pyBlocks.push(pm[2]); }
+        for(const body of pyBlocks){
+          // which file does it edit? p="xxx" or p='xxx'
+          const fm=body.match(/\bp\s*=\s*['"]([^'"]+\.[A-Za-z0-9]+)['"]/);
+          if(!fm)continue;
+          const ap=absPath(fm[1]);
+          if(fsmap[ap]==null)continue; // can only patch a file we have
+          // only if it writes back
+          if(!/\.write\s*\(|open\s*\(\s*p\s*,\s*['"]w/.test(body))continue;
+          fsmap[ap]=applyPyEdits(fsmap[ap], body);
+        }
+      }
+    }
+  }
+  return fsmap;
+}
+function absPath(p){
+  p=(p+"").replace(/['"]/g,"").trim();
+  if(p.startsWith("/"))return p;
+  // bare/relative names are assumed to live in the outputs dir (where cp/cd land)
+  return "/mnt/user-data/outputs/"+p.replace(/^\.\//,"");
+}
+function summariseTool(name,input){
+  const n=(name||"工具").replace(/^.*:/,""); // strip server prefix
+  const path=input.path||input.file_path||input.filename||"";
+  const file=path?path.split("/").pop():"";
+  const cmd=input.command||"";
+  const verbs={view:"读取",create_file:"创建",str_replace:"编辑",edit_file:"编辑",
+    bash:"运行命令",bash_tool:"运行命令",present_files:"输出文件",str_replace_editor:"编辑"};
+  const verb=verbs[n]||n;
+  let detail = file ? file : (cmd ? (cmd.length>50?cmd.slice(0,50)+"…":cmd) : "");
+  return {name:n,label:verb,detail};
+}
+const msgText = m => msgParts(m).text;
+const UPLOADSTORE={};
+function uploadKeysFor(name, obj){
+  const keys=[];
+  const add=v=>{ if(v!=null && v!=="")keys.push((v+"").toLowerCase()); };
+  add(name);
+  if(obj&&typeof obj==="object"){
+    for(const k of ["file_uuid","fileUuid","uuid","id","attachment_uuid","attachmentUuid","source_id"]){
+      add(obj[k]);
+    }
+  }
+  return keys;
+}
+function rememberUploadAsset(path, blob, aliases){
+  const name=(path||"").split(/[\\/]/).pop();
+  const url=URL.createObjectURL(blob);
+  const asset={name, blob, url, mime:blob.type||mimeFor(name), size:blob.size||0};
+  for(const k of uploadKeysFor(name,{id:name,uuid:name,file_uuid:name}))UPLOADSTORE[k]=asset;
+  if(path)UPLOADSTORE[(path+"").toLowerCase()]=asset;
+  for(const alias of asArray(aliases)){
+    for(const k of uploadKeysFor(alias,{id:alias,uuid:alias,file_uuid:alias}))UPLOADSTORE[k]=asset;
+  }
+  return asset;
+}
+function clearUploadStore(){
+  for(const k in UPLOADSTORE){
+    try{ if(UPLOADSTORE[k].url)URL.revokeObjectURL(UPLOADSTORE[k].url); }catch(e){}
+    delete UPLOADSTORE[k];
+  }
+}
+function lookupUploadAsset(name,obj){
+  for(const k of uploadKeysFor(name,obj)){ if(UPLOADSTORE[k])return UPLOADSTORE[k]; }
+  return null;
+}
+function imageDataUrl(o,name){
+  if(!o||typeof o!=="object")return "";
+  const source=o.source&&typeof o.source==="object"?o.source:null;
+  const mime=o.media_type||o.mime_type||o.mimeType||o.file_type||(source&&(source.media_type||source.mime_type))||mimeFor(name||"image.png");
+  const direct=o.url||o.href||o.uri;
+  if(typeof direct==="string" && /^(data:image\/|https?:|blob:)/i.test(direct))return direct;
+  const vals=[o.data,o.base64,o.file_data,o.image_data,o.bytes,o.content,source&&source.data].filter(v=>typeof v==="string"&&v);
+  for(let v of vals){
+    if(/^data:image\//i.test(v))return v;
+    const compact=v.replace(/\s+/g,"");
+    if(compact.length>80 && /^[A-Za-z0-9+/]+={0,2}$/.test(compact))return `data:${mime};base64,${compact}`;
+  }
+  return "";
+}
+// User-uploaded files & attachments live at the message level (not in content[]).
+// Some exports include image bytes/base64 or zip asset files; others only include metadata.
+function msgUploads(m){
+  const out=[];
+  const isImg=n=>/\.(png|jpe?g|gif|webp|bmp|svg|heic|tiff?)$/i.test(n||"");
+  // attachments: often documents with extracted text
+  const atts=Array.isArray(m&&m.attachments)?m.attachments:[];
+  for(const a of atts){
+    const name=pick(a,["file_name","name","title"],"附件");
+    if((a.type||"").toLowerCase()==="skill"){
+      out.push({name, kind:"skill", size:0, ftype:"", text:a.content||a.extracted_content||""});
+      continue;
+    }
+    const kind=isImg(name)?"image":"doc";
+    const dataUrl=kind==="image"?imageDataUrl(a,name):"";
+    const asset=kind==="image"?lookupUploadAsset(name,a):null;
+    out.push({name, kind,
+      size:a.file_size||0, ftype:a.file_type||"",
+      text:kind==="image"?"":(a.extracted_content||a.content||""),
+      url:dataUrl||(asset&&asset.url)||"", metaOnly:kind==="image" && !(dataUrl||(asset&&asset.url)) });
+  }
+  // files: uploaded files, metadata only (image bytes not in export)
+  const files=Array.isArray(m&&m.files)?m.files:[];
+  for(const f of files){
+    const name=pick(f,["file_name","name","title"],"文件");
+    const kind=isImg(name)?"image":"file";
+    const dataUrl=kind==="image"?imageDataUrl(f,name):"";
+    const asset=kind==="image"?lookupUploadAsset(name,f):null;
+    out.push({name, kind,
+      size:f.file_size||(asset&&asset.size)||0, ftype:f.file_type||(asset&&asset.mime)||"",
+      text:kind==="image"?"":(f.extracted_content||""),
+      url:dataUrl||(asset&&asset.url)||"", metaOnly:kind==="image" && !(dataUrl||(asset&&asset.url))});
+  }
+  // non-text content blocks that aren't already handled elsewhere
+  const c=m&&m.content;
+  if(Array.isArray(c))for(const b of c){
+    if(!b||!b.type)continue;
+    if(["text","thinking","redacted_thinking","tool_use","server_tool_use","tool_result","web_search_tool_result","web_search_result"].includes(b.type))continue;
+    if(b.type==="image"){
+      const name=pick(b,["file_name","name","title"],"图片");
+      const dataUrl=imageDataUrl(b,name);
+      const asset=lookupUploadAsset(name,b);
+      out.push({name, kind:"image", size:(asset&&asset.size)||0, ftype:(asset&&asset.mime)||"", url:dataUrl||(asset&&asset.url)||"", metaOnly:!(dataUrl||(asset&&asset.url))});
+    }
+  }
+  // dedupe by filename: the same upload can appear both as an attachment (with extracted
+  // text) and as a files[] entry (metadata only). Keep whichever carries more info.
+  const byName={};
+  for(const u of out){
+    const k=u.name;
+    if(!byName[k]) byName[k]=u;
+    else if((u.url&&!byName[k].url)||(u.text&&!byName[k].text)) byName[k]=u; // prefer recoverable content
+  }
+  return Object.values(byName);
+}
+// kept for compatibility (returns just names) — used nowhere critical now
+function msgAttachments(m){ return msgUploads(m).map(u=>u.name); }
+
+/* ---------- date + text helpers ---------- */
+function fmt(d){if(!d)return"";const x=new Date(d);if(isNaN(x))return"";
+  return x.toLocaleString(undefined,{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}
+function fmtDay(d){if(!d)return"";const x=new Date(d);if(isNaN(x))return"";
+  return x.toLocaleDateString(undefined,{year:"numeric",month:"2-digit",day:"2-digit"})}
+const esc=s=>(s+"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- tiny safe markdown renderer ---------- */
+function md(src){
+  src=src.replace(/\r\n/g,"\n");
+  // protect fenced code blocks first
+  const blocks=[];
+  src=src.replace(/```(\w*)\n?([\s\S]*?)```/g,(_,lang,code)=>{
+    blocks.push(`<pre><code>${esc(code.replace(/\n$/,""))}</code></pre>`);
+    return `\u0000B${blocks.length-1}\u0000`;
+  });
+  const lines=src.split("\n"); let html="",i=0;
+  const inline=t=>esc(t)
+    .replace(/`([^`]+)`/g,(_,c)=>`<code>${c}</code>`)
+    .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g,"$1<em>$2</em>")
+    .replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g,'<a href="$2" target="_blank" rel="noopener">$1</a>');
+  while(i<lines.length){
+    let l=lines[i];
+    if(/^\u0000B\d+\u0000$/.test(l.trim())){html+=l.trim();i++;continue}
+    if(/^\s*$/.test(l)){i++;continue}
+    let h=l.match(/^(#{1,3})\s+(.*)/);
+    if(h){html+=`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`;i++;continue}
+    if(/^\s*>/.test(l)){let buf=[];while(i<lines.length&&/^\s*>/.test(lines[i])){buf.push(lines[i].replace(/^\s*>\s?/,""));i++}
+      html+=`<blockquote>${md(buf.join("\n"))}</blockquote>`;continue}
+    if(/^\s*[-*+]\s+/.test(l)){let buf=[];while(i<lines.length&&/^\s*[-*+]\s+/.test(lines[i])){buf.push("<li>"+inline(lines[i].replace(/^\s*[-*+]\s+/,""))+"</li>");i++}
+      html+="<ul>"+buf.join("")+"</ul>";continue}
+    if(/^\s*\d+\.\s+/.test(l)){let buf=[];while(i<lines.length&&/^\s*\d+\.\s+/.test(lines[i])){buf.push("<li>"+inline(lines[i].replace(/^\s*\d+\.\s+/,""))+"</li>");i++}
+      html+="<ol>"+buf.join("")+"</ol>";continue}
+    // table: a row containing '|' followed by a separator row like |---|:--:|---|
+    if(l.indexOf("|")>=0 && i+1<lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i+1])){
+      const splitRow=r=>{let s=r.trim();if(s.startsWith("|"))s=s.slice(1);if(s.endsWith("|"))s=s.slice(0,-1);
+        return s.split("|").map(c=>c.trim())};
+      const aligns=splitRow(lines[i+1]).map(c=>{const L=c.startsWith(":"),R=c.endsWith(":");
+        return R&&L?"center":R?"right":L?"left":""});
+      const head=splitRow(l); i+=2;
+      const body=[];
+      while(i<lines.length && lines[i].indexOf("|")>=0 && !/^\s*$/.test(lines[i])){body.push(splitRow(lines[i]));i++}
+      const th=head.map((c,ci)=>`<th${aligns[ci]?` style="text-align:${aligns[ci]}"`:""}>${inline(c)}</th>`).join("");
+      const trs=body.map(r=>"<tr>"+r.map((c,ci)=>`<td${aligns[ci]?` style="text-align:${aligns[ci]}"`:""}>${inline(c)}</td>`).join("")+"</tr>").join("");
+      html+=`<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+      continue;
+    }
+    // paragraph (gather until blank)
+    let buf=[l];i++;
+    while(i<lines.length&&!/^\s*$/.test(lines[i])&&!/^(#{1,3}\s|\s*[-*+]\s|\s*\d+\.\s|\s*>)/.test(lines[i])&&!/^\u0000B\d+\u0000$/.test(lines[i].trim())&&lines[i].indexOf("|")<0){buf.push(lines[i]);i++}
+    html+=`<p>${inline(buf.join("\n")).replace(/\n/g,"<br>")}</p>`;
+  }
+  return html.replace(/\u0000B(\d+)\u0000/g,(_,n)=>blocks[n]);
+}
+function hl(html,term){ // highlight search term in already-rendered html (text nodes only)
+  if(!term)return html;
+  const re=new RegExp("("+term.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","ig");
+  return html.replace(/>([^<]+)</g,(m,txt)=>">"+txt.replace(re,"<mark>$1</mark>")+"<");
+}
+// Convert inline citation markers (\u0001CITE<url>\u0002<title>\u0003) into small
+// clickable source chips that sit at the end of the cited sentence.
+// Turn a hostname into a short, clean site label like the web UI shows
+// (zhuanlan.zhihu.com -> Zhihu, www.51ldb.com -> 51ldb, www.stcn.com -> STCN).
+function siteLabel(host){
+  if(!host)return "来源";
+  const known={"zhihu.com":"Zhihu","51ldb.com":"51ldb","stcn.com":"STCN","baidu.com":"百度",
+    "weixin.qq.com":"微信","mp.weixin.qq.com":"微信","sina.com.cn":"新浪","163.com":"网易",
+    "sohu.com":"搜狐","ifeng.com":"凤凰","36kr.com":"36氪","csdn.net":"CSDN","jianshu.com":"简书",
+    "github.com":"GitHub","wikipedia.org":"维基","reddit.com":"Reddit","youtube.com":"YouTube",
+    "twitter.com":"Twitter","x.com":"X","medium.com":"Medium"};
+  // strip common subdomains, then match the registrable-ish base
+  const bare=host.replace(/^(www|zhuanlan|mp|m|blog|news|zhidao|baike)\./,"");
+  for(const k in known){ if(host===k||host.endsWith("."+k)||bare===k) return known[k]; }
+  // otherwise: take the second-level label, capitalize first letter
+  const parts=bare.split(".");
+  const base=parts.length>=2?parts[parts.length-2]:parts[0];
+  return base.charAt(0).toUpperCase()+base.slice(1);
+}
+function citeChips(html){
+  return html.replace(/\u0001CITE(.*?)\u0002(.*?)\u0003/g,(_,url,ttl)=>{
+    url=decodeURIComponent(url); ttl=decodeURIComponent(ttl);
+    const host=hostOfSafe(url);
+    const label=siteLabel(host);
+    const full=ttl||url||host||"来源"; // hover card content
+    const card=`<span class="citecard">${esc(full)}${host?`<span class="citehost">${esc(host)}</span>`:""}</span>`;
+    return url
+      ? `<a class="cite" href="${url.replace(/"/g,"&quot;")}" target="_blank" rel="noopener">${esc(label)}<span class="citearr">↗</span>${card}</a>`
+      : `<span class="cite">${esc(label)}${card}</span>`;
+  });
+}
+
+/* ---------- load file ---------- */
+function isProjectObj(o){ return o && typeof o==="object" && ("prompt_template" in o || "is_starter_project" in o) && !Array.isArray(o.chat_messages); }
+function ingest(raw, opts){
+  const silent = opts && opts.silent;
+  const warn = (m)=>{ if(!silent) alert(m); };
+  let json; try{json=JSON.parse(raw)}catch(e){warn("解析失败：这不是有效的 JSON 文件。\n"+e.message);return}
+  // Classify the file: it can be (a) conversations.json [array of chats], (b) a single
+  // project object, (c) an array of project objects, or (d) a design_chat object.
+  const arr = Array.isArray(json) ? json : (json.conversations||json.data||null);
+  // project file? (single object with prompt_template, or array of such)
+  if(isProjectObj(json) || (Array.isArray(json) && json.length && json.every(isProjectObj))){
+    const ps = Array.isArray(json)?json:[json];
+    let added=0;
+    for(const p of ps){ if(!PROJECTS.some(x=>x.uuid===p.uuid)){PROJECTS.push(p);added++;} }
+    renderProjects(); refreshSections();
+    if(!DATA.length){ // no conversations loaded yet — show a hint instead of empty list
+      $("#empty").innerHTML='<div class="emptybox">已加载 '+added+' 个项目，见左侧「Projects」。<br>如需查看对话，请再拖入 conversations.json。</div>';
+    }
+    return;
+  }
+  // design_chat file? (has messages with role/content)
+  if(json && Array.isArray(json.messages) && json.messages.length && ("role" in json.messages[0])){
+    const conv = designChatToConv(json);
+    if(!DATA.some(c=>c.uuid===conv.uuid)) DATA.push(conv);
+    afterDataLoaded(); return;
+  }
+  // otherwise: conversations export
+  if(!Array.isArray(arr)||!arr.length){warn("没有找到对话或项目。\n请确认拖入的是 conversations.json 或 projects 文件夹里的 .json。");return}
+  // merge (so loading conversations after projects keeps both)
+  for(const c of arr){ if(!DATA.some(x=>x.uuid===c.uuid)) DATA.push(c); }
+  afterDataLoaded();
+}
+function afterDataLoaded(){
+  $("#search").disabled=false; $("#statsbtn").disabled=false;
+  renderStats(); apply(); refreshSections();
+  // Dev diagnostic: how often do created_at and updated_at actually differ?
+  // If this reports very few differing, "最近更新" and "创建时间" will look identical — that's the data, not the sort.
+  try{
+    const real=DATA.filter(c=>!c._design);
+    let differ=0, sameTs=0, missing=0;
+    for(const c of real){
+      const cr=convCreated(c), up=pick(c,["updated_at","update_time","updatedAt"]);
+      if(!cr||!up){missing++;continue}
+      if(tval(cr)!==tval(up))differ++; else sameTs++;
+    }
+    console.log(`[排序诊断] 共 ${real.length} 个对话：created≠updated 的有 ${differ} 个，相同的 ${sameTs} 个，缺字段 ${missing} 个。`
+      +(differ===0?" → 两种排序结果必然一致（导出数据里更新时间≈创建时间）。":""));
+  }catch(e){}
+  if(view.length)openConv(view[0]._i);
+  else{
+    $("#convwrap").classList.add("hide");
+    $("#empty").classList.remove("hide");
+    $("#empty").innerHTML='<div class="emptybox">已加载数据，但没有可展示的消息内容。</div>';
+  }
+}
+// Convert a design_chat (role/content messages) into the conversation shape the viewer uses.
+function designToolBlockToContent(b){
+  const tc=b&&b.toolCall; if(!tc)return null;
+  return {
+    type:"tool_use",
+    id:tc.id||"",
+    name:tc.name||"tool",
+    input:tc.input||{},
+    output:tc.output||"",
+    _designTool:true
+  };
+}
+function designContentToBlocks(raw){
+  if(Array.isArray(raw))return raw;
+  if(typeof raw==="string")return [{type:"text",text:raw}];
+  if(!raw||typeof raw!=="object")return [];
+  const blocks=[];
+  const main=raw.content!=null ? raw.content : raw.text;
+  if(typeof main==="string" && main.length)blocks.push({type:"text",text:main});
+  for(const b of asArray(raw.contentBlocks)){
+    if(!b||typeof b!=="object")continue;
+    if(b.type==="tool_call"){
+      const tb=designToolBlockToContent(b); if(tb)blocks.push(tb);
+    }else if(b.type==="thinking"||b.type==="redacted_thinking"){
+      const t=b.text||b.thinking||"";
+      if(t)blocks.push({type:b.type, thinking:t, text:t, summary:b.summary||b.title||b.headline||b.thinking_summary||b.summary_text||"", summaries:b.summaries||b.summaryBlocks||b.summary_blocks||null});
+    }else if((b.type==="text"||b.type==null) && !main && typeof b.text==="string"){
+      blocks.push({type:"text",text:b.text});
+    }
+  }
+  return blocks;
+}
+function designAttachments(raw){
+  if(!raw||typeof raw!=="object")return [];
+  return asArray(raw.attachments).filter(Boolean).map(a=>({
+    name:a.name||a.title||"附件",
+    type:a.type||"",
+    content:a.content||a.extracted_content||"",
+    file_type:a.file_type||"",
+    file_size:a.file_size||0
+  }));
+}
+function designChatToConv(d){
+  const msgs=(d.messages||[]).map((m,idx)=>{
+    const raw=m.content;
+    const rc=raw&&typeof raw==="object"&&!Array.isArray(raw)?raw:{};
+    const created=pick(m,["created_at","timestamp"],"") || pick(rc,["created_at","timestamp"],"");
+    return {
+      uuid:m.uuid||rc.id||("design-msg-"+idx),
+      sender:(m.role==="user"?"human":"assistant"),
+      created_at:created, updated_at:created,
+      content:designContentToBlocks(raw),
+      attachments:designAttachments(raw),
+      text:typeof raw==="string"?raw:(typeof rc.content==="string"?rc.content:"")
+    };
+  });
+  return {uuid:d.uuid, name:(d.title&&d.title!=="Chat"?d.title:"Design 对话")+(d.project&&d.project.name?(" · "+d.project.name):""),
+    created_at:d.created_at, updated_at:d.updated_at, chat_messages:msgs, project:d.project||null, _design:true};
+}
+
+/* ---------- search + sort + list ---------- */
+// Projects: render the sidebar list and a detail view (name, description, custom
+// instructions/prompt_template, knowledge docs).
+function sortedProjectIndices(){
+  return PROJECTS.map((p,i)=>i).sort((a,b)=>{
+    const A=PROJECTS[a],B=PROJECTS[b];
+    if(projSortKey==="convs")return convsForProject(B).length-convsForProject(A).length;
+    const key=projSortKey==="created"?["created_at","create_time","createdAt"]:["updated_at","update_time","updatedAt","created_at"];
+    return tval(pick(B,key))-tval(pick(A,key));
+  });
+}
+function renderProjects(){
+  const el=$("#projlist"); if(!el)return;
+  const order=sortedProjectIndices();
+  el.innerHTML=order.map(i=>{
+    const p=PROJECTS[i];
+    const sub=selProj===i?projConvsHtml(p):""; // expand conversations under the active project
+    const desc=p.description?`<div class="projd">${esc(p.description)}</div>`:"";
+    return `<div class="projitem ${selProj===i?'sel':''}" onclick="openProject(${i})">
+      <div class="projn">${esc(p.name||"未命名项目")}</div>${desc}</div>${sub}`;
+  }).join("");
+}
+// Nested list of a project's conversations, shown under the selected project. Clicking
+// a row opens that conversation in the main panel (same as the Chats list).
+function projConvsHtml(p){
+  const items=convsForProject(p);
+  if(!items.length){
+    return "";
+  }
+  items.sort((A,B)=>new Date(convUpdated(B.c))-new Date(convUpdated(A.c)));
+  const rows=items.map(({c,_i})=>{
+    const n=convDisplayMsgCount(c);
+    return `<div class="projconv ${sel===_i?'sel':''}" onclick="event.stopPropagation();openConv(${_i},true)">
+      <div class="pct">${esc(convTitle(c))}</div>
+      <div class="pcm">${fmtDay(convUpdated(c))} · ${n} 条</div>
+    </div>`;
+  }).join("");
+  return `<div class="projconvs"><div class="projconv-hd">📑 项目内对话（${items.length}）</div>${rows}</div>`;
+}
+function openProject(i){
+  const p=PROJECTS[i]; if(!p)return;
+  selProj=i; sel=null;              // a project is active; no chat selected
+  // fresh stores for this project's copy/download buttons
+  for(const k in PROJTEXT)delete PROJTEXT[k]; _ptid=0;
+  clearFileStore();
+  // open in the SAME inline panel chats use (sidebar stays visible)
+  $("#empty").classList.add("hide");
+  $("#convwrap").classList.remove("hide");
+  $("#convwrap").classList.add("projmode");   // hide chat-only controls
+  $("#convtitle").textContent=p.name||"项目";
+  const meta=[p.created_at?"创建 "+fmt(p.created_at):"",p.updated_at?"更新 "+fmt(p.updated_at):"",
+    p.is_private?"私有":"", (p.creator&&p.creator.full_name)?"创建者 "+p.creator.full_name:""].filter(Boolean);
+  $("#convmeta").innerHTML=meta.map(m=>`<span>${esc(m)}</span>`).join("");
+  let html=`<div class="statsec"><h3>项目信息</h3>
+    ${p.description?`<p style="margin:0">${esc(p.description)}</p>`:'<div style="color:var(--muted);font-size:13px">（无项目描述）</div>'}</div>`;
+  // custom instructions / prompt template — with a "copy as Markdown" button (copies the
+  // raw markdown source, not the rendered HTML)
+  if(p.prompt_template){
+    const ptid="pt"+(_ptid++); PROJTEXT[ptid]=p.prompt_template;
+    html+=`<div class="statsec"><div class="statsec-hd">
+        <h3 style="margin:0">📝 项目自定义指令（Prompt Template）</h3>
+        <button class="copybtn" onclick="copyText('${ptid}',this)" title="复制 Markdown 原文">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span class="copytxt">复制 Markdown</span></button>
+      </div>
+      <div class="projprompt">${md(p.prompt_template)}</div></div>`;
+  }
+  // knowledge docs — each downloadable to local disk; supports multiple files
+  const docs=Array.isArray(p.docs)?p.docs:[];
+  if(docs.length){
+    html+=`<div class="statsec"><h3>📎 项目知识文件（${docs.length}）</h3>`;
+    for(const d of docs){
+      const nm=pick(d,["file_name","name","title","filename"],"文档");
+      const ct=pick(d,["content","extracted_content","text"],"");
+      let dl="";
+      if(ct){
+        const fid=registerFile(nm,ct,mimeFor(nm));
+        const ref=FILESTORE[fid];
+        const kb=(new Blob([ct]).size/1024).toFixed(1);
+        dl=`<a class="fbtn primary" href="${esc(ref.url)}" download="${esc(ref.name)}">↓ 下载</a><span class="docsize">${kb} KB</span>`;
+      }
+      html+=`<div class="docitem">
+        <div class="docrow">
+          <div class="docn">📄 ${esc(nm)}</div>
+          <div class="docbtns">${dl}</div>
+        </div>${
+        ct?`<details class="uppreview"><summary>查看内容</summary><div class="uptext">${esc(ct.length>8000?ct.slice(0,8000)+"\n…（预览已截断，下载可获取完整内容）":ct)}</div></details>`:`<span class="upnote">（无文本内容，无法下载）</span>`
+      }</div>`;
+    }
+    html+=`</div>`;
+  }else{
+    html+=`<div class="statsec"><h3>📎 项目知识文件</h3><div style="color:var(--muted);font-size:13px">此项目没有上传知识文件</div></div>`;
+  }
+  $("#thread").innerHTML=html;
+  $("#thread").scrollTop=0;
+  if($("#scrollnav"))$("#scrollnav").style.display="none"; // no scroll-nav for projects
+  renderProjects();   // refresh sidebar to show which project is active
+  drawList();         // clear any chat highlight
+  $("#sidebar").classList.remove("show"); // on mobile, reveal the detail panel
+}
+
+function apply(){
+  const term=q.toLowerCase();
+  view=DATA.map((c,_i)=>({c,_i})).filter(({c})=>{
+    if(!convHasMessages(c))return false;
+    if(!term)return true;
+    if(convTitle(c).toLowerCase().includes(term))return true;
+    return convDisplayMsgs(c).some(m=>msgText(m).toLowerCase().includes(term));
+  });
+  view.sort((A,B)=>{
+    if(sortKey==="msgs")return convDisplayMsgCount(B.c)-convDisplayMsgCount(A.c);
+    const k=sortKey==="created"?convCreated:convUpdated;
+    return tval(k(B.c))-tval(k(A.c));
+  });
+  drawList();
+}
+function snippet(c){
+  const term=q.toLowerCase();
+  if(term){for(const m of convDisplayMsgs(c)){const t=msgText(m);const k=t.toLowerCase().indexOf(term);
+    if(k>=0){const s=Math.max(0,k-30);return (s>0?"…":"")+t.slice(s,k+term.length+50).replace(/\s+/g," ")+"…"}}}
+  const first=convDisplayMsgs(c).map(msgText).find(Boolean)||"";
+  return first.replace(/```[\s\S]*?```/g," [代码] ").replace(/\s+/g," ").slice(0,120);
+}
+function listRowHtml(c,_i){
+  const n=convDisplayMsgCount(c);
+  return `<div class="item ${sel===_i?'sel':''}" data-i="${_i}">
+      <div class="t">${esc(convTitle(c))}</div>
+      <div class="m"><span>${fmtDay(convUpdated(c))}</span><span>· ${n} 条</span>${convModel(c)?`<span>· ${esc(convModel(c))}</span>`:""}</div>
+      <div class="snip">${esc(snippet(c))}</div>
+    </div>`;
+}
+function highlightList(elId,term){
+  if(!term)return;
+  const re=new RegExp("("+term.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")+")","ig");
+  $("#"+elId).querySelectorAll(".t,.snip").forEach(el=>el.innerHTML=el.innerHTML.replace(re,"<mark>$1</mark>"));
+}
+function drawList(){
+  const term=q;
+  const chats=view.filter(({c})=>!c._design);
+  const designs=view.filter(({c})=>c._design);
+  $("#list").innerHTML = chats.map(({c,_i})=>listRowHtml(c,_i)).join("")
+    || `<div style="padding:18px 16px;color:var(--muted);font-size:13px">没有匹配的对话。</div>`;
+  $("#designlist").innerHTML = designs.map(({c,_i})=>listRowHtml(c,_i)).join("")
+    || `<div style="padding:18px 16px;color:var(--muted);font-size:13px">没有匹配的 Design 对话。</div>`;
+  highlightList("list",term); highlightList("designlist",term);
+}
+// Show/hide the three top-level sections based on what's loaded, and update counts.
+// Sections stay in whatever open/closed state the user set; default is collapsed.
+function refreshSections(){
+  const shown=DATA.filter(convHasMessages);
+  const designCount=shown.filter(c=>c._design).length;
+  const chatCount=shown.length-designCount;
+  const show=(id,on)=>{const el=$(id);if(el)el.style.display=on?"flex":"none";};
+  show("#sec-projects",PROJECTS.length>0);
+  show("#sec-chats",chatCount>0);
+  show("#sec-design",designCount>0);
+  const setc=(id,v)=>{const el=$(id);if(el)el.textContent=v;};
+  setc("#cnt-projects",PROJECTS.length);
+  setc("#cnt-chats",chatCount);
+  setc("#cnt-design",designCount);
+}
+// Collapse/expand a section. Independent per section (multiple may be open).
+function toggleSection(name){
+  const el=$("#sec-"+name); if(!el)return;
+  const open=el.classList.toggle("open");
+  el.classList.toggle("closed",!open);
+}
+
+/* ---------- render an artifact / generated visual ---------- */
+let _vid=0;
+// Build a sandboxed iframe whose document defines Claude's --color-* design tokens
+// and loads Tabler Icons, so widgets/SVGs render with correct colors and icons.
+const KNOWN_COLOR_CLASSES=new Set(["c-gray","c-neutral","c-coral","c-accent","c-primary","c-orange",
+  "c-teal","c-cyan","c-mint","c-green","c-success","c-red","c-danger","c-blue","c-info",
+  "c-yellow","c-warning","c-purple","c-violet","c-pink","c-track","bar","highlight",
+  "link","edge","connector","flow","arrow","arrow-line","line","conn","path-link",
+  "arr","arrows","branch","joint","arrowhead","arrow-head","marker","axis","grid","gridline",
+  "t","th","ts","tl","label","lbl","sub","muted","caption","desc","title","heading","head"]);
+const FALLBACK_PALETTE=["#e7e3da","#dce8ea","#e8e0ec","#e9e4d6","#dde9e0","#ece0db","#dde3ec"];
+// For any class we don't recognise, generate a safe rule so the shape never falls back
+// to solid black. Connector-ish names (line/edge/path/...) get a stroke-only rule;
+// everything else gets a soft neutral fill.
+function fallbackCss(code){
+  const found=new Set();
+  const re=/class\s*=\s*["']([^"']+)["']/g; let m;
+  while((m=re.exec(code))){
+    m[1].split(/\s+/).forEach(cl=>{
+      if(/^[a-z][a-z0-9_-]*$/i.test(cl) && !KNOWN_COLOR_CLASSES.has(cl)) found.add(cl);
+    });
+  }
+  if(!found.size) return "";
+  let css="\n/* auto fallback for unrecognised classes */\n", i=0;
+  for(const cl of found){
+    if(/(link|edge|conn|flow|arr|arrow|line|path|stroke|axis|grid|rule|divider|branch|joint|wire)/i.test(cl)){
+      css+=`svg .${cl}{fill:none;stroke:#9b978e;stroke-width:1.5}\n`;
+    }else if(/^c-/i.test(cl)){
+      const col=FALLBACK_PALETTE[i++%FALLBACK_PALETTE.length];
+      css+=`svg .${cl},svg .${cl} *{fill:${col};stroke:#cfcabf}\n`;
+    }
+    // non-color, non-connector unknown classes: leave alone (likely text/layout)
+  }
+  return css;
+}
+function iframeFor(bodyHtml,cls){
+  const head=`<base target="_blank">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css">
+<style>
+:root{
+  --color-background-primary:#ffffff;--color-background-secondary:#f5f4ef;--color-background-tertiary:#ece9e2;
+  --color-bg-primary:#ffffff;--color-bg-secondary:#f5f4ef;
+  --color-text-primary:#1f1e1c;--color-text-secondary:#6b6862;--color-text-tertiary:#908d86;
+  --color-text-success:#3c8a4e;--color-text-danger:#c0392b;--color-text-warning:#b8860b;--color-text-accent:#cc6b3f;
+  --color-border-primary:#d9d5cc;--color-border-secondary:#e6e3dc;--color-border-tertiary:#ece9e2;
+  --color-success:#3c8a4e;--color-danger:#c0392b;--color-warning:#b8860b;--color-accent:#cc6b3f;
+  --color-success-bg:#eef6f0;--color-danger-bg:#fbeeec;--color-warning-bg:#fcf7e8;--color-accent-bg:#f9ece4;
+  --background:#ffffff;--foreground:#1f1e1c;--muted:#6b6862;--border:#e6e3dc;
+  --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+}
+html,body{margin:0;background:#fff;color:var(--color-text-primary);
+  font-family:var(--font-sans);font-size:14px;line-height:1.5;padding:8px;overflow:hidden}
+*::-webkit-scrollbar-button{display:none;width:0;height:0}
+*::-webkit-scrollbar-corner{background:transparent}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+i.ti{display:inline-flex;vertical-align:middle}
+svg{max-width:100%;height:auto}
+/* Claude visualization helper classes. The visualize tool styles SVG/HTML via short
+   class names whose <style> block is NOT included in the export, so shapes fall back
+   to solid black. We reconstruct the common palette + text classes here. Color classes
+   may sit on a <g> group (children inherit) or directly on a <rect>, so we target both. */
+svg .c-gray,svg .c-gray *,svg .bar,svg .c-neutral,svg .c-neutral *{fill:#ece9e2;stroke:#d9d5cc}
+svg .c-coral,svg .c-coral *,svg .c-accent,svg .c-accent *,svg .highlight,svg .c-primary,svg .c-primary *,svg .c-orange,svg .c-orange *{fill:#f9d9c8;stroke:#e0a487}
+svg .c-teal,svg .c-teal *,svg .c-cyan,svg .c-cyan *,svg .c-mint,svg .c-mint *{fill:#d4ebe6;stroke:#8fc4ba}
+svg .c-green,svg .c-green *,svg .c-success,svg .c-success *{fill:#dcefe1;stroke:#9cc7a8}
+svg .c-red,svg .c-red *,svg .c-danger,svg .c-danger *{fill:#f7dcd7;stroke:#d9a59c}
+svg .c-blue,svg .c-blue *,svg .c-info,svg .c-info *{fill:#dbe6f5;stroke:#a8c0e0}
+svg .c-yellow,svg .c-yellow *,svg .c-warning,svg .c-warning *{fill:#f7eccf;stroke:#d9c690}
+svg .c-purple,svg .c-purple *,svg .c-violet,svg .c-violet *{fill:#e6dcf2;stroke:#bfa8e0}
+svg .c-pink,svg .c-pink *{fill:#f7dde9;stroke:#dca8c4}
+/* text classes — these set their own fill, overriding any inherited group fill */
+svg .t,svg .label,svg .lbl{fill:#1f1e1c!important;stroke:none!important;font-size:14px;font-weight:600}
+svg .th,svg .title,svg .heading,svg .head{fill:#1f1e1c!important;stroke:none!important;font-size:16px;font-weight:700}
+svg .ts,svg .sub,svg .muted,svg .caption,svg .desc{fill:#5a574f!important;stroke:none!important;font-size:13px}
+svg .axis,svg .grid,svg .gridline{fill:none;stroke:#e6e3dc}
+svg .track,svg .c-track{fill:#f0ede6;stroke:none}
+svg text{stroke:none}
+/* flowchart connectors / edges / arrows. These are stroked lines (fill must be none,
+   or a <path> would render as a black blob); their stroke class is also dropped on
+   export, so we give them a visible grey stroke + dark arrowheads. */
+svg .link,svg .edge,svg .connector,svg .flow,svg .arrow,svg .arrow-line,svg .line,svg .conn,svg .path-link,svg .arr,svg .arrows,svg .branch,svg .joint{
+  fill:none;stroke:#9b978e;stroke-width:1.5}
+svg .arrowhead,svg .arrow-head,svg .marker,svg marker path,svg marker polygon,svg marker line{
+  fill:#9b978e;stroke:#9b978e}
+/* marker arrowheads frequently use stroke="context-stroke"/fill="context-fill", which
+   some engines don't resolve — force a concrete colour so the arrow tip is always drawn */
+svg marker [stroke="context-stroke"],svg marker [fill="context-stroke"]{stroke:#9b978e}
+svg marker [fill="context-fill"]{fill:#9b978e}
+/* a bare line/polyline with no class still needs to be visible, not a black blob */
+svg line:not([class]),svg polyline:not([class]){fill:none;stroke:#9b978e;stroke-width:1.5}
+/* same names as plain CSS, for HTML widgets that use them */
+.c-gray{background:#ece9e2}.c-coral{background:#f9d9c8}.c-teal{background:#d4ebe6}.c-green{background:#dcefe1}.c-red{background:#f7dcd7}
+${fallbackCss(bodyHtml)}
+</style>`;
+  const doc=("<!doctype html><html><head><meta charset='utf-8'>"+head+"</head><body>"+bodyHtml+"</body></html>")
+            .replace(/<\/script>/gi,"<\\/script>");
+  return `<iframe class="vhtml ${cls||''}" sandbox="allow-same-origin" scrolling="no" srcdoc="${doc.replace(/"/g,'&quot;')}"></iframe>`;
+}
+function renderVisual(v){
+  const id="v"+(_vid++);
+  // hide captions that are clearly internal identifiers (snake_case, no spaces, ascii-only)
+  const showCap = v.title && !(/^[a-z0-9]+(_[a-z0-9]+)+$/.test(v.title));
+  const defaultCap = v.kind==="mermaid"?"流程图":v.kind==="svg"?"图表":v.kind==="html"?"交互预览":(v.lang||"代码");
+  const title=showCap?v.title:defaultCap;
+  const btnLabel=v.kind==="html"?"下载":"下载图片";
+  const cap=`<div class="vcap"><span class="vtitle">${esc(title)}</span><button class="vdl" type="button" onclick="downloadVisual('${id}')">${btnLabel}</button></div>`;
+  if(v.kind==="svg"){
+    // Render inside the same token-injected sandbox as HTML widgets. SVGs from the
+    // visualize tool reference --color-* design tokens via fill/style; injecting the
+    // token definitions here guarantees they resolve to real colors instead of black.
+    return `<div class="visual" id="${id}" data-vkind="${esc(v.kind)}" data-vtitle="${esc(title)}">${cap}${iframeFor(v.code,"vsvg-frame")}
+      <details class="vsrc"><summary>查看 SVG 源码</summary><pre><code>${esc(v.code)}</code></pre></details></div>`;
+  }
+  if(v.kind==="mermaid"){
+    return `<div class="visual" id="${id}" data-vkind="${esc(v.kind)}" data-vtitle="${esc(title)}">${cap}<div class="mermaid">${esc(v.code)}</div>
+      <details class="vsrc"><summary>查看 Mermaid 源码</summary><pre><code>${esc(v.code)}</code></pre></details></div>`;
+  }
+  if(v.kind==="html"){
+    return `<div class="visual" id="${id}" data-vkind="${esc(v.kind)}" data-vtitle="${esc(title)}">${cap}${iframeFor(v.code)}
+      <details class="vsrc"><summary>查看 HTML 源码</summary><pre><code>${esc(v.code)}</code></pre></details></div>`;
+  }
+  // code / unknown → show source with language label
+  return `<div class="visual" id="${id}" data-vkind="${esc(v.kind)}" data-vtitle="${esc(title)}">${cap}
+    <pre><code>${esc(v.code)}</code></pre></div>`;
+}
+function autosizeIframes(root){
+  root.querySelectorAll("iframe.vhtml").forEach(f=>{
+    try{
+      const resize=()=>{const d=f.contentDocument, b=d&&d.body, e=d&&d.documentElement;
+        if(b)f.style.height=Math.max(b.scrollHeight,e?e.scrollHeight:0,b.offsetHeight,e?e.offsetHeight:0)+24+"px"};
+      f.addEventListener("load",resize); setTimeout(resize,60); setTimeout(resize,300);
+    }catch(e){}
+  });
+}
+function safeFileName(name,ext){
+  const base=(name||"chart").replace(/[\/\\:*?"<>|]/g,"_").replace(/\s+/g," ").trim().slice(0,60)||"chart";
+  return base+"."+ext;
+}
+function downloadBlob(blob,name){
+  const u=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
+function inlineSvgComputedStyles(src, dst){
+  const props=[
+    "fill","stroke","stroke-width","stroke-linecap","stroke-linejoin","stroke-miterlimit",
+    "stroke-dasharray","stroke-dashoffset","opacity","fill-opacity","stroke-opacity",
+    "font-family","font-size","font-weight","font-style","text-anchor","dominant-baseline",
+    "paint-order","vector-effect","color","display","visibility","background","background-color",
+    "border","border-radius","box-shadow","padding","margin","line-height"
+  ];
+  const srcNodes=[src,...src.querySelectorAll("*")];
+  const dstNodes=[dst,...dst.querySelectorAll("*")];
+  for(let i=0;i<srcNodes.length&&i<dstNodes.length;i++){
+    const s=srcNodes[i], d=dstNodes[i], win=s.ownerDocument&&s.ownerDocument.defaultView||window, cs=win.getComputedStyle(s);
+    for(const p of props){
+      const v=cs.getPropertyValue(p);
+      if(v)d.style.setProperty(p,v);
+    }
+    // SVG text often depends on inherited colour; make it explicit.
+    if((d.tagName||"").toLowerCase()==="text" && !d.style.fill){
+      d.style.fill=cs.getPropertyValue("fill")||cs.getPropertyValue("color")||"#1f1e1c";
+    }
+  }
+}
+function svgToPng(svgEl,name){
+  const clone=svgEl.cloneNode(true);
+  clone.setAttribute("xmlns","http://www.w3.org/2000/svg");
+  inlineSvgComputedStyles(svgEl, clone);
+  const box=svgEl.getBoundingClientRect();
+  const vb=(clone.getAttribute("viewBox")||"").trim().split(/\s+/).map(Number);
+  let w=Math.ceil(box.width||svgEl.clientWidth||svgEl.getAttribute("width")||vb[2]||1000);
+  let h=Math.ceil(box.height||svgEl.clientHeight||svgEl.getAttribute("height")||vb[3]||700);
+  w=Math.max(1,Math.min(w,4000)); h=Math.max(1,Math.min(h,4000));
+  clone.setAttribute("width",w); clone.setAttribute("height",h);
+  const svg=new XMLSerializer().serializeToString(clone);
+  const img=new Image();
+  const url=URL.createObjectURL(new Blob([svg],{type:"image/svg+xml;charset=utf-8"}));
+  img.onload=()=>{
+    const scale=Math.min(2,4000/Math.max(w,h));
+    const canvas=document.createElement("canvas"); canvas.width=Math.round(w*scale); canvas.height=Math.round(h*scale);
+    const ctx=canvas.getContext("2d"); ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    canvas.toBlob(b=>{ if(b)downloadBlob(b,safeFileName(name,"png")); URL.revokeObjectURL(url); },"image/png");
+  };
+  img.onerror=()=>{ URL.revokeObjectURL(url); downloadBlob(new Blob([svg],{type:"image/svg+xml"}),safeFileName(name,"svg")); };
+  img.src=url;
+}
+function downloadVisual(id){
+  const root=document.getElementById(id); if(!root)return;
+  const title=root.dataset.vtitle||"图表";
+  const svg=root.querySelector(".mermaid svg, svg");
+  if(svg){ svgToPng(svg,title); return; }
+  const frame=root.querySelector("iframe.vhtml");
+  if(frame){
+    try{
+      const doc=frame.contentDocument;
+      const fsvg=doc&&doc.querySelector("svg");
+      if(fsvg){ svgToPng(fsvg,title); return; }
+      if(doc){ downloadBlob(new Blob(["<!doctype html>\n"+doc.documentElement.outerHTML],{type:"text/html;charset=utf-8"}),safeFileName(title,"html")); return; }
+    }catch(e){}
+  }
+  const src=root.querySelector(".vsrc code, pre code");
+  if(src)downloadBlob(new Blob([src.textContent||""],{type:"text/plain;charset=utf-8"}),safeFileName(title,"txt"));
+}
+
+/* ---------- generated files: download / open ---------- */
+// Files created in the conversation (via create_file) whose content is present in the
+// export. We register them and expose download + open-in-new-tab actions. Since this
+// viewer is a standalone local page (not a sandboxed artifact), Blob URLs work here.
+const FILESTORE={}; let _fid=0;
+const MSGTEXT={}; let _mid=0; // per-message plain text, for the copy button
+function registerFile(name,content,mime){
+  const id="f"+(_fid++);
+  const blob = content instanceof Blob ? content : new Blob([content],{type:mime||mimeFor(name)});
+  const url=URL.createObjectURL(blob);
+  FILESTORE[id]={name,content,mime:mime||mimeFor(name),url};
+  return id;
+}
+function clearFileStore(){
+  for(const k in FILESTORE){
+    try{ if(FILESTORE[k].url)URL.revokeObjectURL(FILESTORE[k].url); }catch(e){}
+    delete FILESTORE[k];
+  }
+  _fid=0;
+}
+function copyMsg(id,btn){
+  const txt=MSGTEXT[id]||"";
+  const done=()=>{ if(!btn)return; const t=btn.querySelector(".copytxt"); const old=t?t.textContent:"";
+    if(t)t.textContent="已复制"; btn.classList.add("copied");
+    setTimeout(()=>{ if(t)t.textContent=old; btn.classList.remove("copied"); },1400); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done).catch(()=>fallbackCopy(txt,done));
+  }else fallbackCopy(txt,done);
+}
+function fallbackCopy(txt,done){
+  const ta=document.createElement("textarea"); ta.value=txt; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try{document.execCommand("copy")}catch(e){}
+  ta.remove(); done&&done();
+}
+// Generic "copy this raw text" used by project views (prompt template etc.). The text
+// is stashed in PROJTEXT keyed by id so it survives in HTML attributes without escaping
+// issues; the button shows a transient "已复制" confirmation.
+const PROJTEXT={}; let _ptid=0;
+function copyText(id,btn){
+  const txt=PROJTEXT[id]||"";
+  const done=()=>{ if(!btn)return; const t=btn.querySelector(".copytxt"); const old=t?t.textContent:"";
+    if(t)t.textContent="已复制"; btn.classList.add("copied");
+    setTimeout(()=>{ if(t)t.textContent=old; btn.classList.remove("copied"); },1400); };
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt).then(done).catch(()=>fallbackCopy(txt,done));
+  }else fallbackCopy(txt,done);
+}
+function mimeFor(name){
+  const e=(name.split(".").pop()||"").toLowerCase();
+  return ({html:"text/html",htm:"text/html",svg:"image/svg+xml",css:"text/css",js:"text/javascript",
+    json:"application/json",md:"text/markdown",txt:"text/plain",csv:"text/csv",xml:"application/xml",
+    png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",gif:"image/gif",webp:"image/webp",
+    bmp:"image/bmp",heic:"image/heic",tif:"image/tiff",tiff:"image/tiff"})[e]||"text/plain";
+}
+// Render user-uploaded files / attachments attached to a message.
+function renderUploads(ups){
+  if(!ups||!ups.length)return "";
+  ups=ups.filter(u=>u.kind!=="skill");
+  if(!ups.length)return "";
+  const icon=u=>u.kind==="image"?"🖼️":u.kind==="doc"?"📄":"📎";
+  const rows=ups.map(u=>{
+    const sz=u.size?` · ${(u.size/1024).toFixed(1)} KB`:"";
+    const img=u.kind==="image"&&u.url
+      ? `<a class="upthumb" href="${esc(u.url)}" target="_blank" rel="noopener" title="打开图片"><img src="${esc(u.url)}" alt="${esc(u.name)}"></a>`
+      : "";
+    const actions=u.kind==="image"&&u.url
+      ? `<span class="upactions"><a class="fbtn" href="${esc(u.url)}" target="_blank" rel="noopener">打开</a><a class="fbtn primary" href="${esc(u.url)}" download="${esc(u.name)}">下载</a></span>`
+      : "";
+    const link=u.kind==="image"&&u.metaOnly?`<button class="fbtn uplinkbtn" data-up-name="${esc(u.name)}" type="button">选择图片</button>`:"";
+    const note=u.kind==="image"&&u.metaOnly?`<span class="upnote">仅文件名</span>`:"";
+    const preview=u.text?`<details class="uppreview"><summary>查看提取的文本内容</summary><div class="uptext">${esc(u.text.length>4000?u.text.slice(0,4000)+"\n…（已截断）":u.text)}</div></details>`:"";
+    return `<div class="uprow">${img}<span class="upicon">${icon(u)}</span>
+      <span class="upname">${esc(u.name)}</span><span class="upsize">${esc(u.ftype||"")}${sz}</span>${actions}${link}${note}
+      ${preview}</div>`;
+  }).join("");
+  return `<div class="uploads"><div class="uploadhd">📥 用户上传（${ups.length}）</div>${rows}</div>`;
+}
+function renderSkillTags(ups){
+  const skills=(ups||[]).filter(u=>u.kind==="skill");
+  if(!skills.length)return "";
+  return `<div class="attach">${skills.map(u=>`<span class="a" title="${esc(u.text||u.name)}">${esc(u.name)}</span>`).join("")}</div>`;
+}
+function renderFiles(files){
+  if(!files||!files.length)return "";
+  const rows=files.map(f=>{
+    if(f.content==null){
+      // presented as a deliverable but its content isn't recoverable from the export
+      return `<div class="filerow">
+        <span class="ficon">📄</span>
+        <span class="fname">${esc(f.name)}</span>
+        <span class="fsize nocontent">内容未包含在导出中</span>
+      </div>`;
+    }
+    const id=registerFile(f.name,f.content,mimeFor(f.name));
+    const ref=FILESTORE[id];
+    const openable=/\.(html?|svg)$/i.test(f.name);
+    return `<div class="filerow">
+      <span class="ficon">📄</span>
+      <span class="fname">${esc(f.name)}</span>
+      <span class="fsize">${(f.content.length/1024).toFixed(1)} KB</span>
+      <span class="fbtns">
+        ${openable?`<a class="fbtn" href="${esc(ref.url)}" target="_blank" rel="noopener">在新标签打开</a>`:""}
+        <a class="fbtn primary" href="${esc(ref.url)}" download="${esc(ref.name)}">下载</a>
+      </span>
+    </div>`;
+  }).join("");
+  return `<div class="files"><div class="filehd">📦 此回复生成的文件（${files.length}）</div>${rows}</div>`;
+}
+function blobUrl(id){const f=FILESTORE[id];return f&&f.url}
+function downloadFile(id){
+  const f=FILESTORE[id]; if(!f)return;
+  const a=document.createElement("a");a.href=f.url;a.download=f.name;a.rel="noopener";document.body.appendChild(a);a.click();a.remove();
+}
+function openFile(id){const f=FILESTORE[id]; if(f)window.open(f.url,"_blank","noopener")}
+
+function renderThinkingBlock(text, index, total, title){
+  const multi=total>1;
+  const label=title?`${esc(title)}${multi?` · ${index}/${total}`:""}`:(multi?`思考过程 ${index}/${total}`:"思考过程");
+  return `<details class="think">
+    <summary>💭 ${label}（默认隐藏，点击展开）</summary>
+    <div class="thinkbody">${hl(md(text),q)}</div>
+  </details>`;
+}
+function renderMessageFlow(parts,human){
+  const flow=(parts.flow&&parts.flow.length)?parts.flow:[];
+  const total=flow.filter(x=>x&&x.type==="thinking").length || ((parts.thoughts&&parts.thoughts.length)||0);
+  let seen=0, html="";
+  if(flow.length){
+    for(const seg of flow){
+      if(!seg)continue;
+      if(seg.type==="thinking"){
+        if(!seg.text)continue;
+        if(!human)html+=renderThinkingBlock(seg.text,++seen,total,seg.title||"");
+      }else if(seg.type==="text"){
+        if(!seg.text)continue;
+        html+=citeChips(hl(md(seg.text),q));
+      }else if(seg.type==="visual"&&seg.visual){
+        html+=renderVisual(seg.visual);
+      }
+    }
+    return html;
+  }
+  const thoughts=(parts.thoughts&&parts.thoughts.length)?parts.thoughts:(parts.thinking?[parts.thinking]:[]);
+  if(!human)html+=thoughts.map((t,i)=>renderThinkingBlock(t,i+1,thoughts.length,"")).join("");
+  if(parts.text)html+=citeChips(hl(md(parts.text),q));
+  return html;
+}
+
+/* ---------- web search panel ("Searched the web") ---------- */
+function hostOf(u){try{return new URL(u).hostname.replace(/^www\./,"")}catch(e){return ""}}
+function renderSearches(searches){
+  if(!searches||!searches.length)return "";
+  const queries=searches.filter(s=>s.type==="query").map(s=>s.query);
+  // dedupe result links by url
+  const seen=new Set(), results=[];
+  for(const s of searches){ if(s.type==="result"){const k=s.url||s.title; if(!seen.has(k)){seen.add(k);results.push(s)} } }
+  const qLabel = queries.length ? esc(queries.join(" · ")) : "网页搜索";
+  const head = `🔍 搜索了网页${results.length?`（${results.length} 个来源）`:""}`;
+  const qrow = queries.length ? `<div class="srchq">搜索词：${qLabel}</div>` : "";
+  const rows = results.map(r=>{
+    const host=hostOf(r.url);
+    return r.url
+      ? `<a class="srchrow" href="${esc(r.url)}" target="_blank" rel="noopener"><span class="srcht">${esc(r.title)}</span><span class="srchh">${esc(host)}</span></a>`
+      : `<div class="srchrow"><span class="srcht">${esc(r.title)}</span></div>`;
+  }).join("");
+  return `<details class="searches"><summary>${head}</summary><div class="srchbody">${qrow}${rows}</div></details>`;
+}
+
+/* ---------- open one conversation ---------- */
+// Switch which sibling (edit/regeneration) is shown at a branch point, then re-render.
+function switchBranch(parentUuid, idx, ev){
+  const thread=$("#thread");
+  const oldTop=thread?thread.scrollTop:0;
+  const btn=ev&&ev.target?ev.target:null;
+  const oldMsg=btn&&btn.closest?btn.closest(".msg"):null;
+  const oldOffset=(thread&&oldMsg)?(oldMsg.getBoundingClientRect().top-thread.getBoundingClientRect().top):null;
+  BRANCH_CHOICES[parentUuid]=idx;
+  renderConv(sel,{preserveScroll:true, anchorParent:parentUuid, oldTop, oldOffset}); // re-render in place, keeping all branch choices
+}
+function openConv(i,userInitiated){
+  if(sel!==i) BRANCH_CHOICES={}; // new conversation: reset branch selections
+  renderConv(i,userInitiated);
+}
+function renderConv(i,userInitiated){
+  const opts=(userInitiated&&typeof userInitiated==="object")?userInitiated:{};
+  userInitiated=!!(userInitiated&&typeof userInitiated!=="object");
+  if(sel!==i) BRANCH_CHOICES={}; // new conversation: reset branch selections
+  sel=i; const c=DATA[i];
+  // is this conversation part of the currently-expanded project's sublist?
+  const inSelProj = selProj!=null && PROJECTS[selProj] &&
+    convsForProject(PROJECTS[selProj]).some(x=>x._i===i);
+  // expand the owning section only when the user actively picked an item, so the
+  // three sections stay collapsed on first load as designed
+  if(userInitiated){
+    const secName = inSelProj ? "projects" : (c._design?"design":"chats");
+    const ownSec=$("#sec-"+secName);
+    if(ownSec && ownSec.classList.contains("closed")){ ownSec.classList.add("open"); ownSec.classList.remove("closed"); }
+  }
+  $("#empty").classList.add("hide"); $("#convwrap").classList.remove("hide");
+  $("#convwrap").classList.remove("projmode");        // showing a chat, not the project page
+  if(!inSelProj) selProj=null;                        // leaving project context entirely
+  $("#convtitle").textContent=convTitle(c);
+  const n=convDisplayMsgCount(c);
+  $("#convmeta").innerHTML=[
+    convModel(c)?`模型：${esc(convModel(c))}`:"",
+    `创建：${fmt(convCreated(c))}`,
+    `更新：${fmt(convUpdated(c))}`,
+    `${n} 条消息`
+  ].filter(Boolean).map(esc=>`<span>${esc}</span>`).join("");
+  clearFileStore(); // reset per-conversation file store
+  for(const k in MSGTEXT)delete MSGTEXT[k]; _mid=0; // reset per-conversation copy store
+  if($("#csearchin")){$("#csearchin").value="";} CSEARCH={matches:[],idx:-1}; if($("#csearchcount"))$("#csearchcount").textContent="";
+  const path = activePath(c, BRANCH_CHOICES).filter(msgHasRenderableContent);
+  // reconstruct file contents across the whole conversation (handles cp + patch chains
+  // where the deliverable isn't written directly via create_file)
+  const fileChain = buildFileChain(c);
+  $("#thread").innerHTML = path.map(m=>{
+    const human=msgSender(m).startsWith("h")||msgSender(m)==="user";
+    const parts=msgParts(m);
+    const body=renderMessageFlow(parts,human);
+    const allUploads=msgUploads(m);
+    const uploads=renderUploads(allUploads);
+    const skillTags=renderSkillTags(allUploads);
+    const vis = parts.visuals.filter(v=>!v._inFlow).map(renderVisual).join("");
+    // backfill any file whose content msgParts couldn't recover, using the chain
+    for(const f of parts.files){
+      if(f.content==null){
+        const hit=fileChain[f.path]!=null?fileChain[f.path]
+                 :fileChain[absPath(f.path)]!=null?fileChain[absPath(f.path)]
+                 :fileChain[absPath(f.name)];
+        if(hit!=null)f.content=hit;
+      }
+    }
+    const fileCards = renderFiles(parts.files);
+    const searchPanel = !human ? renderSearches(parts.searches) : "";
+    const toolsLine = (parts.tools && parts.tools.length)
+      ? `<details class="toolacts"><summary>🔧 ${parts.tools.length} 个工具操作（创建/编辑文件等，点击展开）</summary><div class="toolbody">${
+          parts.tools.map(t=>`<div class="toolrow"><span class="tname">${esc(t.label)}</span>${t.detail?`<span class="tdet">${esc(t.detail)}</span>`:""}</div>`).join("")
+        }</div></details>`
+      : "";
+    // branch navigator: when this message is one of several edits/regenerations
+    const br = m._branch;
+    const brNav = br
+      ? `<span class="branchnav" title="这条消息有多个版本（你当时编辑或重新生成过），用箭头切换；切换后下方的后续对话也会跟着变成该版本的分支">
+          <span class="brlabel">${human?'此处有多个提问版本':'此处有多个回答版本'}</span>
+          <button class="brbtn" onclick="switchBranch('${br.parent}',${br.index-1},event)" ${br.index<=0?'disabled':''}>‹</button>
+          <span class="brcount">${br.index+1}/${br.count}</span>
+          <button class="brbtn" onclick="switchBranch('${br.parent}',${br.index+1},event)" ${br.index>=br.count-1?'disabled':''}>›</button>
+        </span>`
+      : "";
+    const brBanner = br
+      ? `<div class="brbanner">🔀 这是第 <b>${br.index+1}</b> / ${br.count} 个版本${br.index===br.count-1?'（最新）':''}，用右上角的 ‹ › 可切换其它版本，后续对话会随之改变</div>`
+      : "";
+    // copy button: stash the message's plain text (citation markers stripped) so it can
+    // be copied to the clipboard.
+    const cid="m"+(_mid++);
+    MSGTEXT[cid]=(parts.text||"").replace(/\u0001CITE.*?\u0002.*?\u0003/g,"");
+    const copyBtn=`<button class="copybtn" onclick="copyMsg('${cid}',this)" title="复制这条消息">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      <span class="copytxt">复制</span></button>`;
+    return `<div class="msg ${human?'human':''}" data-msg-uuid="${esc(m.uuid||"")}" data-branch-parent="${br?esc(br.parent):""}">
+      <div class="who">${human?'你':'Claude'}<span class="ts">${fmt(pick(m,["created_at","create_time","timestamp"]))}</span>${brNav}</div>
+      <div class="bubble">${brBanner}${searchPanel}${uploads}${body}${skillTags}${vis}${fileCards}${toolsLine}
+      </div>
+      <div class="msgactions">${copyBtn}</div></div>`;
+  }).join("");
+  // render mermaid diagrams + size html iframes
+  try{
+    if(window.mermaid){
+      mermaid.initialize({startOnLoad:false,securityLevel:"loose",theme:"neutral"});
+      const nodes=$("#thread").querySelectorAll(".mermaid");
+      if(nodes.length)mermaid.run({nodes}).catch(()=>{});
+    }
+  }catch(e){}
+  autosizeIframes($("#thread"));
+  if(opts.preserveScroll){
+    const thread=$("#thread");
+    let restored=false;
+    if(thread&&opts.anchorParent){
+      const anchor=thread.querySelector(`.msg[data-branch-parent="${cssEsc(opts.anchorParent)}"]`);
+      if(anchor&&opts.oldOffset!=null){
+        thread.scrollTop += anchor.getBoundingClientRect().top-thread.getBoundingClientRect().top-opts.oldOffset;
+        restored=true;
+      }
+    }
+    if(!restored&&thread)thread.scrollTop=opts.oldTop||0;
+  }else{
+    $("#thread").scrollTop=0;
+  }
+  if(window.__updScrollNav)window.__updScrollNav(); // refresh top/bottom button state
+  drawList();
+  renderProjects();   // keep project sublist highlight/expansion in sync
+  $("#sidebar").classList.remove("show");
+}
+
+/* ---------- events ---------- */
+// Decide what to do with a picked/dropped File: a .zip export is unpacked in the
+// browser (no manual extraction needed) and every relevant JSON inside it is fed to
+// ingest(); a plain .json is ingested directly.
+function isZipFile(f){
+  return /\.zip$/i.test(f.name) || f.type==="application/zip" || f.type==="application/x-zip-compressed";
+}
+async function loadZip(file){
+  if(typeof JSZip==="undefined"){ alert("ZIP 解析库未能加载，请检查网络后重试，或先手动解压再拖入 .json。"); return; }
+  clearUploadStore();
+  let zip;
+  try{ zip = await JSZip.loadAsync(file); }
+  catch(e){ alert("无法读取该 ZIP 文件：\n"+e.message); return; }
+  // Collect every .json entry. We want conversations.json + each project file. Other
+  // JSON (users.json etc.) is harmless — ingest() classifies and ignores non-matching.
+  const entries = [];
+  const assetEntries = [];
+  zip.forEach((path, entry)=>{
+    if(entry.dir) return;
+    if(/(^|\/)__MACOSX\//.test(path)) return; // macOS archive cruft
+    if(/\.(png|jpe?g|gif|webp|bmp|svg|heic|tiff?)$/i.test(path)){
+      assetEntries.push({path, entry, base: path.split("/").pop().toLowerCase()});
+      return;
+    }
+    if(!/\.json$/i.test(path)) return;
+    entries.push({path, entry, base: path.split("/").pop().toLowerCase()});
+  });
+  if(!entries.length){ alert("这个 ZIP 里没有找到任何 .json 文件。\n请确认拖入的是 Claude 导出的数据包。"); return; }
+  for(const it of assetEntries){
+    try{
+      const raw=await it.entry.async("blob");
+      const blob=raw.type?raw:new Blob([raw],{type:mimeFor(it.path)});
+      rememberUploadAsset(it.path,blob);
+    }catch(e){}
+  }
+  // Load conversations.json LAST so projects are registered first; that way the
+  // "projects loaded, now drop conversations" hint never flashes and the first
+  // conversation auto-opens with project context already present.
+  entries.sort((a,b)=>{
+    const ac=a.base==="conversations.json", bc=b.base==="conversations.json";
+    if(ac!==bc) return ac?1:-1;            // conversations.json to the end
+    const ap=/project/.test(a.path), bp=/project/.test(b.path);
+    if(ap!==bp) return ap?-1:1;            // project files first
+    return a.path.localeCompare(b.path);
+  });
+  let ok=0;
+  for(const it of entries){
+    let text;
+    try{ text = await it.entry.async("string"); }catch(e){ continue; }
+    try{ ingest(text, {silent:true}); ok++; }catch(e){ /* skip unparseable members */ }
+  }
+  if(!ok) alert("ZIP 已读取，但其中的 JSON 都无法解析为对话或项目。");
+}
+function handleFile(f){
+  if(!f) return;
+  if(/^image\//i.test(f.type)||/\.(png|jpe?g|gif|webp|bmp|svg|heic|tiff?)$/i.test(f.name||"")){
+    rememberUploadAsset(f.name,f);
+    if(sel!=null)renderConv(sel);
+    return;
+  }
+  if(isZipFile(f)){ loadZip(f); return; }
+  const r=new FileReader(); r.onload=()=>ingest(r.result); r.readAsText(f);
+}
+$("#file").addEventListener("change",e=>{const fs=e.target.files;if(fs&&fs.length){for(const f of fs)handleFile(f);}e.target.value="";});
+const drop=$("#drop");
+["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hot")}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hot")}));
+drop.addEventListener("drop",e=>{const fs=e.dataTransfer.files;if(fs&&fs.length){for(const f of fs)handleFile(f);}});
+$("#search").addEventListener("input",e=>{q=e.target.value.trim();apply()});
+$("#sortrow").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+  sortKey=b.dataset.sort;$("#sortrow").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));apply()});
+$("#projsortrow").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;
+  projSortKey=b.dataset.psort;$("#projsortrow").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));renderProjects()});
+$("#list").addEventListener("click",e=>{const it=e.target.closest(".item");if(it)openConv(+it.dataset.i,true)});
+$("#designlist").addEventListener("click",e=>{const it=e.target.closest(".item");if(it)openConv(+it.dataset.i,true)});
+$("#thread").addEventListener("click",e=>{
+  const b=e.target.closest(".uplinkbtn"); if(!b)return;
+  const wanted=b.dataset.upName||"";
+  const inp=document.createElement("input");
+  inp.type="file"; inp.accept="image/*";
+  inp.onchange=()=>{
+    const f=inp.files&&inp.files[0]; if(!f)return;
+    rememberUploadAsset(f.name,f,[wanted]);
+    inp.remove();
+    if(sel!=null)renderConv(sel);
+  };
+  inp.style.display="none";
+  document.body.appendChild(inp);
+  inp.click();
+});
+// collapsible section headers (collapsed by default, click to expand)
+document.querySelectorAll(".navhd[data-toggle]").forEach(h=>{
+  h.addEventListener("click",()=>toggleSection(h.dataset.toggle));
+});
+$("#back").addEventListener("click",()=>$("#sidebar").classList.add("show"));
+
+/* ---------- in-conversation search ---------- */
+function clearCSearch(){
+  // unwrap existing highlight marks
+  const thread=$("#thread");
+  thread.querySelectorAll("mark.csearch").forEach(mk=>{
+    const tx=document.createTextNode(mk.textContent); mk.parentNode.replaceChild(tx,mk); 
+  });
+  thread.normalize&&thread.normalize();
+  CSEARCH={matches:[],idx:-1}; $("#csearchcount").textContent="";
+}
+function runCSearch(){
+  clearCSearch();
+  const term=($("#csearchin").value||"").trim();
+  if(!term){return;}
+  const thread=$("#thread");
+  const re=new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"),"gi");
+  // walk text nodes inside bubbles, wrap matches in <mark class="csearch">
+  const walker=document.createTreeWalker(thread,NodeFilter.SHOW_TEXT,{
+    acceptNode(n){
+      if(!n.nodeValue.trim())return NodeFilter.FILTER_REJECT;
+      // skip inside the search bar / scripts / existing marks
+      let p=n.parentNode;
+      while(p&&p!==thread){ const tg=(p.tagName||"").toLowerCase();
+        if(tg==="script"||tg==="style")return NodeFilter.FILTER_REJECT; p=p.parentNode; }
+      return re.test(n.nodeValue)?NodeFilter.FILTER_ACCEPT:NodeFilter.FILTER_REJECT;
+    }
+  });
+  const targets=[]; let nn; while(nn=walker.nextNode())targets.push(nn);
+  for(const node of targets){
+    re.lastIndex=0; const text=node.nodeValue; const frag=document.createDocumentFragment();
+    let last=0,m;
+    while((m=re.exec(text))){
+      if(m.index>last)frag.appendChild(document.createTextNode(text.slice(last,m.index)));
+      const mk=document.createElement("mark"); mk.className="csearch"; mk.textContent=m[0];
+      frag.appendChild(mk); last=m.index+m[0].length;
+      if(m[0].length===0)re.lastIndex++;
+    }
+    if(last<text.length)frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag,node);
+  }
+  CSEARCH.matches=Array.from(thread.querySelectorAll("mark.csearch"));
+  if(CSEARCH.matches.length){ CSEARCH.idx=0; focusMatch(0); }
+  else { $("#csearchcount").textContent="0/0"; }
+}
+function focusMatch(i){
+  if(!CSEARCH.matches.length)return;
+  CSEARCH.idx=(i+CSEARCH.matches.length)%CSEARCH.matches.length;
+  CSEARCH.matches.forEach((mk,j)=>mk.classList.toggle("cur",j===CSEARCH.idx));
+  const cur=CSEARCH.matches[CSEARCH.idx];
+  cur.scrollIntoView({behavior:"smooth",block:"center"});
+  $("#csearchcount").textContent=(CSEARCH.idx+1)+"/"+CSEARCH.matches.length;
+}
+$("#csearchbtn").addEventListener("click",runCSearch);
+$("#csearchin").addEventListener("keydown",e=>{
+  if(e.key==="Enter"){ e.preventDefault();
+    if(CSEARCH.matches.length && CSEARCH.idx>=0) focusMatch(CSEARCH.idx+1); else runCSearch(); }
+});
+$("#cprev").addEventListener("click",()=>focusMatch(CSEARCH.idx-1));
+$("#cnext").addEventListener("click",()=>focusMatch(CSEARCH.idx+1));
+
+/* ---------- export current conversation ---------- */
+function exportMarkdown(){
+  if(sel==null||sel<0||!DATA[sel])return;
+  const c=DATA[sel];
+  const path=activePath(c, BRANCH_CHOICES).filter(msgHasRenderableContent);
+  let md="# "+(convTitle(c))+"\n\n";
+  const meta=[convModel(c)?"模型: "+convModel(c):"","创建: "+fmt(convCreated(c)),"更新: "+fmt(convUpdated(c))].filter(Boolean);
+  md+="> "+meta.join(" · ")+"\n\n---\n\n";
+  for(const m of path){
+    const human=msgSender(m).startsWith("h")||msgSender(m)==="user";
+    const p=msgParts(m);
+    md+="## "+(human?"🧑 你":"🤖 Claude")+"  \n";
+    md+="*"+fmt(pick(m,["created_at","create_time","timestamp"]))+"*\n\n";
+    // clean text: strip citation markers but keep the URL inline as a footnote-ish link
+    let txt=(p.text||"").replace(/\u0001CITE(.*?)\u0002(.*?)\u0003/g,(_,u,t)=>{
+      u=decodeURIComponent(u); return u?` [来源](${u})`:""; });
+    if(txt)md+=txt+"\n\n";
+    if(p.searches&&p.searches.length){
+      const res=p.searches.filter(s=>s.type==="result");
+      if(res.length){ md+="**🔍 搜索来源:**\n"; res.forEach(r=>{md+="- ["+(r.title||r.url)+"]("+r.url+")\n"}); md+="\n"; }
+    }
+    if(p.files&&p.files.length){ md+="**📎 生成文件:** "+p.files.map(f=>f.name).join("、")+"\n\n"; }
+    md+="---\n\n";
+  }
+  const blob=new Blob([md],{type:"text/markdown;charset=utf-8"});
+  const u=URL.createObjectURL(blob); const a=document.createElement("a");
+  a.href=u; a.download=(convTitle(c).replace(/[\/\\:*?"<>|]/g,"_").slice(0,50)||"conversation")+".md";
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
+function exportPDF(){
+  if(sel==null||sel<0||!DATA[sel])return;
+  // Use the browser's print dialog (user picks "Save as PDF"). We open a clean print
+  // window containing just the conversation so headers/sidebar aren't included.
+  const c=DATA[sel];
+  const path=activePath(c, BRANCH_CHOICES).filter(msgHasRenderableContent);
+  const esc2=s=>(s+"").replace(/[&<>]/g,x=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[x]));
+  let body="";
+  for(const m of path){
+    const human=msgSender(m).startsWith("h")||msgSender(m)==="user";
+    const p=msgParts(m);
+    const txt=citeChips(md((p.text||"")));
+    body+=`<div class="m ${human?'h':''}"><div class="r">${human?'你':'Claude'} · ${esc2(fmt(pick(m,["created_at","create_time","timestamp"])))}</div><div class="b">${txt}</div></div>`;
+  }
+  const html=`<!doctype html><html><head><meta charset="utf-8"><title>${esc2(convTitle(c))}</title>
+  <style>
+  body{font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#1f1e1c;max-width:760px;margin:0 auto;padding:24px}
+  h1{font-size:20px} .meta{color:#666;font-size:12px;margin-bottom:20px}
+  .m{margin:0 0 16px;page-break-inside:avoid} .r{font-size:11px;font-weight:700;color:#888;text-transform:uppercase;margin-bottom:4px}
+  .m.h .r{color:#2563eb}
+  .b{border:1px solid #e6e3dc;border-radius:10px;padding:12px 14px;background:#faf9f5}
+  .m.h .b{background:#eef3fd;border-color:#d6e0f5}
+  .b pre{background:#1f1e1c;color:#e8e6e0;padding:10px;border-radius:6px;overflow:auto;font-size:12px}
+  .b table{border-collapse:collapse;margin:8px 0} .b th,.b td{border:1px solid #ddd;padding:4px 8px}
+  .b img,.b svg{max-width:100%} .cite{font-size:10px;color:#2563eb;border:1px solid #d6e0f5;border-radius:4px;padding:1px 4px;margin:0 2px}
+  .citecard{display:none}
+  iframe{width:100%;border:1px solid #e6e3dc;border-radius:8px}
+  @media print{ .noprint{display:none} }
+  </style></head><body>
+  <h1>${esc2(convTitle(c))}</h1>
+  <div class="meta">${esc2([convModel(c)?"模型: "+convModel(c):"","创建: "+fmt(convCreated(c))].filter(Boolean).join(" · "))}</div>
+  <button class="noprint" onclick="window.print()" style="padding:8px 16px;margin-bottom:16px;cursor:pointer">打印 / 另存为 PDF</button>
+  ${body}
+  <script>setTimeout(()=>window.print(),600)<\/script>
+  </body></html>`;
+  const w=window.open("","_blank");
+  if(w){ w.document.write(html); w.document.close(); }
+  else { alert("浏览器拦截了弹窗，请允许弹窗后重试，或用 MD 导出。"); }
+}
+$("#expmd").addEventListener("click",exportMarkdown);
+$("#exppdf").addEventListener("click",exportPDF);
+
+/* ---------- statistics page ---------- */
+function computeStats(){
+  const convs=DATA.filter(convHasMessages);
+  let nmsg=0, chars=0;
+  const daily={}, weekly={}, hourly=new Array(24).fill(0), weekday=new Array(7).fill(0);
+  let searches=0, files=0, visuals=0, thinks=0;
+  const convLen=[]; const words={};
+  // new aggregates
+  let humanMsgs=0, asstMsgs=0, humanChars=0, asstChars=0;
+  let sumHumanLen=0, sumAsstLen=0; // for average turn length (chars)
+  const models={};                 // model slug -> conversation count
+  const depthBuckets={"1-5":0,"6-15":0,"16-30":0,"31-50":0,"50+":0};
+  const daySet=new Set();           // distinct active days, for streak calc
+  // Chinese + English tokenizer (very lightweight): pull CJK bigrams + ascii words,
+  // drop common stopwords so the cloud is meaningful.
+  const stop=new Set("的了是我你他她它在和与及或而把被让从向对为以于之也都很就还又再不没有这那个们吧吗呢啊呀如果因为所以但是然后就是可以这个那个一个一下一种这种什么怎么如何the and for you are that this with have not but can will your what how".split(/\s+/));
+  const stopCJK=new Set(["的","了","是","我","你","他","她","它","在","和","与","及","或","而","把","被","让","从","对","为","以","于","也","都","很","就","还","又","再","不","没","有","这","那","个","们","吧","吗","呢","啊","如果","因为","所以","但是","然后","就是","可以","这个","那个","一个","一下","什么","怎么","如何","我们","你们","他们","就是","这样","那样","一些","这些","那些","知道","可能","应该","需要","或者","比如","已经","还是"]);
+  for(const c of convs){
+    const path=activePath(c, {}).filter(msgHasRenderableContent); // default branch path for stats
+    convLen.push({name:convTitle(c), n:path.length, uuid:c.uuid, i:DATA.indexOf(c)});
+    // depth bucket per conversation
+    const dl=path.length;
+    if(dl<=5)depthBuckets["1-5"]++; else if(dl<=15)depthBuckets["6-15"]++;
+    else if(dl<=30)depthBuckets["16-30"]++; else if(dl<=50)depthBuckets["31-50"]++; else depthBuckets["50+"]++;
+    // model attribution (per conversation)
+    const mdl=convModel(c)||"未知";
+    models[mdl]=(models[mdl]||0)+1;
+    for(const m of path){
+      nmsg++;
+      const p=msgParts(m);
+      const txt=p.text||""; chars+=txt.length;
+      const human=msgSender(m).startsWith("h");
+      if(human){humanMsgs++; humanChars+=txt.length; sumHumanLen+=txt.length;}
+      else{asstMsgs++; asstChars+=txt.length; sumAsstLen+=txt.length;}
+      if(p.searches&&p.searches.length)searches+=p.searches.filter(s=>s.type==="result").length;
+      if(p.files)files+=p.files.length;
+      if(p.visuals)visuals+=p.visuals.length;
+      if(p.thinking)thinks++;
+      const ts=pick(m,["created_at","create_time","timestamp"]);
+      if(ts){const d=new Date(ts); if(!isNaN(d)){
+        const day=ts.slice(0,10); daily[day]=(daily[day]||0)+1; daySet.add(day);
+        hourly[d.getHours()]++;
+        weekday[d.getDay()]++;        // 0=Sun … 6=Sat
+        const wk=day.slice(0,7); weekly[wk]=(weekly[wk]||0)+1;
+      }}
+      // word counting only on human+assistant text
+      // ascii words
+      (txt.toLowerCase().match(/[a-z][a-z0-9\-]{2,}/g)||[]).forEach(w=>{ if(!stop.has(w))words[w]=(words[w]||0)+1; });
+      // CJK bigrams
+      const cjk=txt.match(/[\u4e00-\u9fa5]+/g)||[];
+      for(const seg of cjk){ for(let k=0;k+2<=seg.length;k++){ const bg=seg.slice(k,k+2);
+        if(!stopCJK.has(bg))words[bg]=(words[bg]||0)+1; } }
+    }
+  }
+  const dates=Object.keys(daily).sort();
+  // peak hour
+  let peakH=0; for(let h=0;h<24;h++)if(hourly[h]>hourly[peakH])peakH=h;
+  // peak weekday
+  let peakW=0; for(let w=0;w<7;w++)if(weekday[w]>weekday[peakW])peakW=w;
+  // longest active streak (consecutive calendar days)
+  const sortedDays=[...daySet].sort();
+  let curStreak=0, maxStreak=0, prev=null;
+  for(const ds of sortedDays){
+    if(prev){ const diff=(new Date(ds)-new Date(prev))/86400000;
+      curStreak = diff===1 ? curStreak+1 : 1;
+    } else curStreak=1;
+    if(curStreak>maxStreak)maxStreak=curStreak; prev=ds;
+  }
+  const topWords=Object.entries(words).filter(([w,n])=>n>=3).sort((a,b)=>b[1]-a[1]).slice(0,50);
+  const topConv=convLen.slice().sort((a,b)=>b.n-a.n).slice(0,12);
+  const modelPairs=Object.entries(models).sort((a,b)=>b[1]-a[1]);
+  return {nconv:convs.length, nmsg, chars, daily, dates, weekly, hourly, weekday, peakH, peakW,
+    searches, files, visuals, thinks, topWords, topConv, avgLen: convs.length?(nmsg/convs.length):0,
+    humanMsgs, asstMsgs, humanChars, asstChars,
+    avgHumanLen: humanMsgs?(sumHumanLen/humanMsgs):0, avgAsstLen: asstMsgs?(sumAsstLen/asstMsgs):0,
+    models:modelPairs, depthBuckets, maxStreak, activeDays:daySet.size};
+}
+function svgLineChart(pairs, label){
+  // pairs: [[xLabel, value], ...]
+  if(!pairs.length)return "<div style='color:var(--muted);font-size:13px'>暂无数据</div>";
+  const W=900,H=200,pad=34;
+  const vals=pairs.map(p=>p[1]); const max=Math.max(...vals,1);
+  const n=pairs.length;
+  const x=i=>pad+(n<=1?0:i*(W-2*pad)/(n-1));
+  const y=v=>H-pad-(v/max)*(H-2*pad);
+  let pts=pairs.map((p,i)=>x(i)+","+y(p[1])).join(" ");
+  let area="M"+x(0)+","+(H-pad)+" L"+pairs.map((p,i)=>x(i)+","+y(p[1])).join(" L")+" L"+x(n-1)+","+(H-pad)+" Z";
+  // x labels: show ~8 evenly
+  const step=Math.max(1,Math.ceil(n/8));
+  let xl=""; for(let i=0;i<n;i+=step){ xl+=`<text x="${x(i)}" y="${H-8}" font-size="10" fill="#888" text-anchor="middle">${pairs[i][0].slice(5)}</text>`; }
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">
+    <path d="${area}" fill="#cc6b3f22"/>
+    <polyline points="${pts}" fill="none" stroke="#cc6b3f" stroke-width="2"/>
+    ${pairs.map((p,i)=>`<circle cx="${x(i)}" cy="${y(p[1])}" r="2.5" fill="#cc6b3f"/>`).join("")}
+    <text x="${pad}" y="16" font-size="11" fill="#888">峰值 ${max}</text>
+    ${xl}
+  </svg>`;
+}
+function barChart(pairs, fmtv){
+  const max=Math.max(...pairs.map(p=>p[1]),1);
+  return pairs.map(p=>`<div class="barrow"><span class="bl">${esc(p[0]+"")}</span>
+    <span class="bt"><span class="bf" style="width:${(p[1]/max*100).toFixed(1)}%"></span></span>
+    <span class="bv">${fmtv?fmtv(p[1]):p[1]}</span></div>`).join("");
+}
+// Compact SVG donut chart with a centered total and a legend list.
+function donutChart(pairs, opts){
+  opts=opts||{};
+  const total=pairs.reduce((s,p)=>s+p[1],0)||1;
+  const palette=["#cc6b3f","#2563eb","#3c8a4e","#b8860b","#8e44ad","#16a085","#c0392b","#5d6d7e","#d35400","#7f8c8d"];
+  const R=52, C=2*Math.PI*R; let off=0;
+  const arcs=pairs.map((p,i)=>{
+    const frac=p[1]/total, len=frac*C;
+    const seg=`<circle r="${R}" cx="70" cy="70" fill="none" stroke="${palette[i%palette.length]}" stroke-width="20"
+      stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 70 70)"/>`;
+    off+=len; return seg;
+  }).join("");
+  const legend=pairs.map((p,i)=>`<div class="lgrow"><span class="lgdot" style="background:${palette[i%palette.length]}"></span>
+    <span class="lgname" title="${esc(p[0]+"")}">${esc(opts.short?opts.short(p[0]):p[0]+"")}</span>
+    <span class="lgval">${p[1]} · ${(p[1]/total*100).toFixed(0)}%</span></div>`).join("");
+  return `<div class="donutwrap"><svg viewBox="0 0 140 140" class="donutsvg">${arcs}
+    <text x="70" y="66" text-anchor="middle" font-size="22" font-weight="700" fill="var(--ink)">${opts.center!=null?opts.center:total}</text>
+    <text x="70" y="84" text-anchor="middle" font-size="10" fill="var(--muted)">${esc(opts.centerLabel||"总计")}</text></svg>
+    <div class="lglist">${legend}</div></div>`;
+}
+// Single horizontal split bar (e.g. human vs assistant) with inline labels.
+function splitBar(segs){
+  const total=segs.reduce((s,x)=>s+x.v,0)||1;
+  const bar=segs.map(x=>`<span class="sbseg" style="width:${(x.v/total*100).toFixed(2)}%;background:${x.color}" title="${esc(x.label)}: ${x.v}"></span>`).join("");
+  const leg=segs.map(x=>`<span class="sblg"><span class="lgdot" style="background:${x.color}"></span>${esc(x.label)} <b>${(x.v/total*100).toFixed(1)}%</b> <span style="color:var(--muted)">(${x.disp!=null?x.disp:x.v})</span></span>`).join("");
+  return `<div class="splitbar">${bar}</div><div class="splitleg">${leg}</div>`;
+}
+// 7×N weekday heatmap is overkill for this data; show a single-row weekday intensity strip.
+function weekdayStrip(weekday){
+  const names=["周日","周一","周二","周三","周四","周五","周六"];
+  const max=Math.max(...weekday,1);
+  return `<div class="wdstrip">${weekday.map((v,i)=>{
+    const t=v/max; const bg=`rgba(204,107,63,${(0.12+0.88*t).toFixed(3)})`;
+    return `<div class="wdcell" title="${names[i]}：${v} 条消息"><div class="wdbox" style="background:${bg};color:${t>0.55?'#fff':'var(--ink)'}">${v}</div><div class="wdlbl">${names[i]}</div></div>`;
+  }).join("")}</div>`;
+}
+function renderStats(){
+  const s=computeStats();
+  $("#statssub").textContent=`${s.nconv} 个对话 · ${s.nmsg} 条消息`;
+  const wdNames=["周日","周一","周二","周三","周四","周五","周六"];
+
+  /* ===== 概览 Tab ===== */
+  const overviewCards=`<div class="statgrid">
+    <div class="statcard"><div class="num">${s.nconv}</div><div class="lbl">对话总数</div></div>
+    <div class="statcard"><div class="num">${s.nmsg.toLocaleString()}</div><div class="lbl">消息总数</div></div>
+    <div class="statcard"><div class="num">${(s.chars/10000).toFixed(1)}万</div><div class="lbl">总字数</div></div>
+    <div class="statcard"><div class="num">${s.activeDays}</div><div class="lbl">活跃天数</div></div>
+    <div class="statcard"><div class="num">${s.maxStreak}</div><div class="lbl">最长连续活跃</div></div>
+    <div class="statcard"><div class="num">${s.peakH}:00</div><div class="lbl">最活跃时段</div></div>
+    <div class="statcard"><div class="num">${wdNames[s.peakW]}</div><div class="lbl">最活跃星期</div></div>
+    <div class="statcard"><div class="num">${s.avgLen.toFixed(1)}</div><div class="lbl">平均每对话消息</div></div>
+  </div>`;
+  // human vs assistant split (messages + chars)
+  const splitMsg=splitBar([
+    {label:"你",v:s.humanMsgs,color:"#2563eb"},
+    {label:"Claude",v:s.asstMsgs,color:"#cc6b3f"}
+  ]);
+  const splitChar=splitBar([
+    {label:"你",v:s.humanChars,color:"#2563eb",disp:(s.humanChars/10000).toFixed(1)+"万"},
+    {label:"Claude",v:s.asstChars,color:"#cc6b3f",disp:(s.asstChars/10000).toFixed(1)+"万"}
+  ]);
+  const splitSec=`<div class="statsec"><h3>👥 你 vs Claude</h3>
+    <div class="subh">消息条数占比</div>${splitMsg}
+    <div class="subh" style="margin-top:16px">字数占比</div>${splitChar}</div>`;
+  // interaction efficiency
+  const effSec=`<div class="statsec"><h3>⚡ 互动效率</h3>
+    <div class="minigrid">
+      <div class="minicard"><div class="mn">${Math.round(s.avgHumanLen)}</div><div class="ml">平均提问字数</div></div>
+      <div class="minicard"><div class="mn">${Math.round(s.avgAsstLen)}</div><div class="ml">平均回复字数</div></div>
+      <div class="minicard"><div class="mn">${s.avgHumanLen?(s.avgAsstLen/s.avgHumanLen).toFixed(1):"0"}×</div><div class="ml">回复/提问倍率</div></div>
+      <div class="minicard"><div class="mn">${s.nconv?Math.round(s.chars/s.nconv):0}</div><div class="ml">平均每对话字数</div></div>
+    </div></div>`;
+  // model distribution
+  const modelSec=s.models.length?`<div class="statsec"><h3>🤖 模型使用分布 <span class="h3sub">（按对话数）</span></h3>
+    ${donutChart(s.models,{center:s.models.length,centerLabel:"种模型",short:prettyModel})}</div>`:"";
+  const tabOverview=overviewCards+`<div class="twocol">${splitSec}${effSec}</div>`+modelSec;
+
+  /* ===== 时间 Tab ===== */
+  const span = s.dates.length?`${s.dates[0]} 至 ${s.dates[s.dates.length-1]}`:"";
+  let dailyPairs=[];
+  if(s.dates.length){
+    const start=new Date(s.dates[0]), end=new Date(s.dates[s.dates.length-1]);
+    for(let d=new Date(start); d<=end; d.setDate(d.getDate()+1)){
+      const key=d.toISOString().slice(0,10); dailyPairs.push([key, s.daily[key]||0]);
+    }
+  }
+  const trend=`<div class="statsec"><h3>📈 每日消息量趋势 ${span?`<span class="h3sub">（${span}）</span>`:""}</h3>
+    ${svgLineChart(dailyPairs)}</div>`;
+  const wkPairs=Object.entries(s.weekly).sort((a,b)=>a[0]<b[0]?-1:1);
+  const monthly=`<div class="statsec"><h3>🗓️ 每月消息量</h3>${barChart(wkPairs)}</div>`;
+  const weekdaySec=`<div class="statsec"><h3>📅 星期分布 <span class="h3sub">（哪几天最常用）</span></h3>${weekdayStrip(s.weekday)}</div>`;
+  const hourPairs=s.hourly.map((v,h)=>[(h<10?"0":"")+h+":00",v]);
+  const hourly=`<div class="statsec"><h3>🕐 24 小时活跃分布</h3>${barChart(hourPairs)}</div>`;
+  const tabTime=trend+`<div class="twocol">${weekdaySec}${monthly}</div>`+hourly;
+
+  /* ===== 内容 Tab ===== */
+  const habits=`<div class="statsec"><h3>🔧 使用习惯</h3>
+    ${barChart([["🔍 网页搜索来源",s.searches],["📎 生成文件",s.files],["🎨 生成图表/可视化",s.visuals],["💭 含思考过程的回复",s.thinks]])}</div>`;
+  // conversation depth distribution
+  const depthPairs=Object.entries(s.depthBuckets).map(([k,v])=>[k+" 条",v]);
+  const depthSec=`<div class="statsec"><h3>📊 对话深度分布 <span class="h3sub">（每个对话的消息条数区间）</span></h3>
+    ${barChart(depthPairs)}</div>`;
+  // word cloud
+  const maxW=s.topWords.length?s.topWords[0][1]:1;
+  const cloud=s.topWords.map(([w,n])=>{
+    const size=12+Math.round((n/maxW)*24);
+    const op=0.5+0.5*(n/maxW);
+    return `<span class="w" style="font-size:${size}px;opacity:${op.toFixed(2)}" title="出现 ${n} 次">${esc(w)}</span>`;
+  }).join("");
+  const wordcloud=`<div class="statsec"><h3>☁️ 高频词云 <span class="h3sub">（中文双字词 + 英文词，已过滤常见词）</span></h3>
+    <div class="wordcloud">${cloud||'<span style="color:var(--muted)">暂无</span>'}</div></div>`;
+  const tabContent=`<div class="twocol">${habits}${depthSec}</div>`+wordcloud;
+
+  /* ===== 排行 Tab ===== */
+  const rank=s.topConv.map((c,i)=>`<div class="rankrow"><span class="rn">${i+1}</span>
+    <span class="rt" onclick="gotoConvFromStats(${c.i})">${esc(c.name)}</span><span class="rc">${c.n} 条</span></div>`).join("");
+  const tabRank=`<div class="statsec"><h3>🏆 最长对话排行 <span class="h3sub">（点击跳转）</span></h3><div class="ranklist">${rank}</div></div>`;
+
+  const tabs=[
+    {id:"overview",label:"概览",html:tabOverview},
+    {id:"time",label:"时间",html:tabTime},
+    {id:"content",label:"内容",html:tabContent},
+    {id:"rank",label:"排行",html:tabRank},
+  ];
+  const nav=`<div class="stabs">${tabs.map((t,i)=>
+    `<button class="stab${t.id===_statTab?' on':''}" data-stab="${t.id}">${t.label}</button>`).join("")}</div>`;
+  const panes=tabs.map(t=>`<div class="spane${t.id===_statTab?'':' hide'}" data-pane="${t.id}">${t.html}</div>`).join("");
+  $("#statsbody").innerHTML=nav+panes;
+  // wire tab switching (delegated, rebind each render is fine since innerHTML was replaced)
+  $("#statsbody").querySelector(".stabs").addEventListener("click",e=>{
+    const b=e.target.closest(".stab"); if(!b)return;
+    _statTab=b.dataset.stab;
+    $("#statsbody").querySelectorAll(".stab").forEach(x=>x.classList.toggle("on",x===b));
+    $("#statsbody").querySelectorAll(".spane").forEach(p=>p.classList.toggle("hide",p.dataset.pane!==_statTab));
+  });
+}
+// Friendly short model label for the legend (keeps the donut tidy).
+function prettyModel(slug){
+  const s=(slug+"").toLowerCase();
+  if(/opus/.test(s))return "Opus"+(/4-?8/.test(s)?" 4.8":/4-?5/.test(s)?" 4.5":/4-?1/.test(s)?" 4.1":"");
+  if(/sonnet/.test(s))return "Sonnet"+(/4-?6/.test(s)?" 4.6":/4-?5/.test(s)?" 4.5":/3-?7/.test(s)?" 3.7":"");
+  if(/haiku/.test(s))return "Haiku"+(/4-?5/.test(s)?" 4.5":"");
+  if(/mythos/.test(s))return "Mythos";
+  if(/fable/.test(s))return "Fable";
+  if(slug==="未知"||!slug)return "未标注";
+  return (slug+"").replace(/^claude-?/,"").slice(0,16);
+}
+function openStats(){
+  if(!DATA.length)return;
+  renderStats();
+  $("#statspage").classList.remove("hide");
+}
+function gotoConvFromStats(i){
+  $("#statspage").classList.add("hide");
+  openConv(i,true);
+}
+$("#statsbtn").addEventListener("click",openStats);
+$("#statsback").addEventListener("click",()=>$("#statspage").classList.add("hide"));
+$("#sntop").addEventListener("click",()=>$("#thread").scrollTo({top:0,behavior:"smooth"}));
+$("#snbot").addEventListener("click",()=>{const t=$("#thread");t.scrollTo({top:t.scrollHeight,behavior:"smooth"})});
+// dim each button when already at that end; the control is visible whenever a
+// conversation is open (we re-check after layout/iframes settle so it isn't hidden
+// prematurely while content height is still being computed).
+(function(){
+  const t=$("#thread"), top=$("#sntop"), bot=$("#snbot"), nav=$("#scrollnav"), wrap=$("#convwrap");
+  function upd(){
+    // hide only when no conversation is open
+    const open = wrap && !wrap.classList.contains("hide");
+    if(!open){ nav.style.display="none"; return; }
+    nav.style.display="flex";
+    const atTop=t.scrollTop<=4, atBot=t.scrollTop+t.clientHeight>=t.scrollHeight-4;
+    top.classList.toggle("snoff",atTop);
+    bot.classList.toggle("snoff",atBot && t.scrollHeight-t.clientHeight<=40);
+  }
+  t.addEventListener("scroll",upd,{passive:true});
+  window.addEventListener("resize",upd);
+  window.__updScrollNav=function(){ upd(); setTimeout(upd,120); setTimeout(upd,500); };
+  upd();
+})();
+</script>
